@@ -69,8 +69,10 @@ module tdc_frontend #(
 
     // ---- flag pipeline (3 stages, same as the encoder) ----
     // Pad with values that don't affect the result: 1 for AND, 0 for OR.
-    wire [6*GP-1:0] code_and = {{(6*GP-N+1){1'b1}}, code} ;
-    wire [6*GP-1:0] code_or  = {{(6*GP-N+1){1'b0}}, code} ;
+    // (The "+1" avoids a zero-width replication when N is a multiple of 6;
+    // the extra MSB is simply truncated by the assignment.)
+    wire [6*GP-1:0] code_and = {{(6*GP-N+1){1'b1}}, code};
+    wire [6*GP-1:0] code_or  = {{(6*GP-N+1){1'b0}}, code};
 
     reg [GP-1:0] and_p = {GP{1'b0}}, or_p = {GP{1'b0}};
     reg          t0_a = 1'b0, t0_b = 1'b0, t0_c = 1'b0;
