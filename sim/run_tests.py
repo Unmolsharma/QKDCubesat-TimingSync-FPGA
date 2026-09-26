@@ -12,6 +12,10 @@ Model configurations (all SIMULATED, see rtl/tdc_delay_line.v):
                test_coverage is EXPECTED TO FAIL here. It shows that 192
                taps don't cover 4 ns if the carry chain is ~10 % faster than
                nominal.
+  calibrated   default chain, but the RTL LUT is loaded from the .mem file that
+               scripts/calibrate.py produced from the default config's
+               code-density run. It checks the $readmemh path end to end and
+               re-runs the boundary test with the tighter calibrated tolerance.
 """
 
 import argparse
@@ -25,6 +29,7 @@ from cocotb_tools.runner import get_runner
 SIM_DIR = Path(__file__).resolve().parent
 ROOT = SIM_DIR.parent
 RTL = sorted((ROOT / "rtl").glob("*.v"))
+SIM_LUT = SIM_DIR / "out" / "default" / "calib_lut.mem"
 
 # suite name -> (python module, HDL toplevel)
 SUITES = {
@@ -41,7 +46,24 @@ CONFIGS = {
                         suites=["frontend", "top"],
                         tests={"frontend": ["test_coverage"], "top": ["test_top_coverage"]},
                         xfail={"test_coverage", "test_top_coverage"}),
+    "calibrated": dict(params={"LUT_FILE": f'"{SIM_LUT.as_posix()}"'}, suites=["top"],
+                       tests={"top": ["test_smoke", "test_boundary", "test_code_density"]},
+                       env={"TDC_LUT_FILE": str(SIM_LUT), "TDC_N_DENSITY": "2000",
+                            "TDC_N_VALID": "5000"},
+                       xfail=set()),
 }
+
+
+def ensure_sim_lut():
+    """The calibrated config needs a LUT built from the default config's data."""
+    codes = SIM_LUT.parent / "fine_codes.csv"
+    if not codes.exists():
+        raise SystemExit("calibrated config: run the default config first "
+                         "(it produces sim/out/default/fine_codes.csv)")
+    import subprocess
+    subprocess.run([sys.executable, str(ROOT / "scripts" / "calibrate.py"), str(codes),
+                    "--out", str(SIM_LUT), "--summary", str(SIM_LUT.with_suffix(".json"))],
+                   check=True)
 
 
 def junit_results(xml_path: Path):
@@ -61,6 +83,8 @@ def run(config: str, suite: str, only_test=None, extra_params=None):
     out = SIM_DIR / "out" / config
     out.mkdir(parents=True, exist_ok=True)
 
+    if config == "calibrated":
+        ensure_sim_lut()
     runner = get_runner("icarus")
     runner.build(
         sources=RTL,
@@ -79,7 +103,8 @@ def run(config: str, suite: str, only_test=None, extra_params=None):
         test_dir=SIM_DIR,
         plusargs=[f"+TDC_MODEL_DUMP={(out / 'model_thresholds.csv').as_posix()}"],
         extra_env={"TDC_CONFIG": config, "TDC_OUT": str(out),
-                   "PYTHONPATH": os.pathsep.join([str(SIM_DIR), str(ROOT / "scripts")])},
+                   "PYTHONPATH": os.pathsep.join([str(SIM_DIR), str(ROOT / "scripts")]),
+                   **cfg.get("env", {})},
     )
     return [(config, suite, name, ok, name in cfg["xfail"]) for name, ok in junit_results(Path(xml))]
 

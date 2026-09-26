@@ -1,0 +1,23 @@
+{
+  "label": "SIMULATED",
+  "hits": 50000,
+  "code_min": 1,
+  "code_max": 184,
+  "n_codes": 184,
+  "lsb_mean_ps": 21.73913043478261,
+  "width_min_ps": 0.0,
+  "width_max_ps": 65.60000000000001,
+  "missing_codes": 1,
+  "dnl_raw_min": -1.0,
+  "dnl_raw_max": 2.0176000000000003,
+  "inl_raw_min": -6.337999999999993,
+  "inl_raw_max": 1.5882400000000807,
+  "quant_rms_ps": 10.899686534452876,
+  "width_est_vs_true_rms_ps": 3.3189670015111314,
+  "validation_hits": 20000,
+  "rms_raw_ps": 37.01024562682544,
+  "rms_cal_ps": 11.73629657575321,
+  "inl_residual_max_lsb": 0.2941165560500014,
+  "inl_residual_max_ps": 6.393838175000031,
+  "inl_uncal_validation_max_lsb": 3.8256676560500003
+}

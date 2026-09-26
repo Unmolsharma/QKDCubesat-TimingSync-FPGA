@@ -16,6 +16,7 @@ ALL RESULTS ARE SIMULATED (behavioural carry-chain model).
 import os
 import random
 import statistics
+import sys
 from pathlib import Path
 
 import cocotb
@@ -77,7 +78,7 @@ class TopTB:
         assert cal >> self.ps_w == coarse, "raw/cal coarse mismatch"
         fine_ps = cal & ((1 << self.ps_w) - 1)
         self.beats.append(dict(coarse=coarse, fine=fine, fine_ps=fine_ps,
-                               t_est=self.t_edge(coarse) - fine_ps * PS))
+                               t_est=self.t_edge(coarse) - fine_ps * PS, t_out=now_fs()))
 
     async def run_pulses(self, pulses, settle_cycles=30):
         await cocotb.start_soon(pulse_train(self.dut.hit, pulses))
@@ -133,8 +134,10 @@ async def test_smoke(dut):
     assert len(tb.beats) == 1, f"expected 1 timestamp, got {len(tb.beats)}"
     b = tb.beats[0]
     err_ps = (b["t_est"] - t_hit) / PS
-    dut._log.info("SIMULATED smoke: coarse=%d fine=%d fine_ps=%d  error=%.1f ps",
-                  b["coarse"], b["fine"], b["fine_ps"], err_ps)
+    lat_ns = (b["t_out"] - tb.t_edge(b["coarse"])) / 1e6
+    dut._log.info("SIMULATED smoke: coarse=%d fine=%d fine_ps=%d  error=%.1f ps, "
+                  "capture edge -> m_valid %.0f ns (%d clk)", b["coarse"], b["fine"],
+                  b["fine_ps"], err_ps, lat_ns, round(lat_ns * 1e6 / T_CLK))
     assert abs(err_ps) < 300
     assert tb.counters() == dict(short=0, sat=0, rej=0, drop=0), tb.counters()
 
@@ -380,7 +383,8 @@ async def test_code_density(dut):
 
     if CALIBRATED:
         # the RTL LUT must return exactly what the .mem file says
-        lut = [int(x, 16) for x in Path(os.environ["TDC_LUT_FILE"]).read_text().split()
-               if not x.startswith("//")]
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+        from calibrate import read_mem
+        lut = read_mem(os.environ["TDC_LUT_FILE"])
         bad = [b for b in tb.beats if lut[b["fine"]] != b["fine_ps"]]
         assert not bad, f"RTL LUT disagrees with .mem file: {bad[:3]}"
