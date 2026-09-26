@@ -188,19 +188,22 @@ knob.
 Chain model: `default` config: 48 x CARRY4, TAP_NOM_PS = 22, per-tap sigma 15 %,
 skew 6 ps, jitter 4 ps rms, SEED = 1. Calibration set: 50 000 random hits. Validation
 set: a **separate** 20 000 hits with known true times, never used for calibration.
+Numbers come from a clean `python sim/run_tests.py` full run. The model's jitter RNG
+is one stream per simulation, so running a single test alone gives slightly
+different values in the last digit.
 
 | Metric | Simulated | Hardware |
 |---|---|---|
 | Codes used / missing | 1..184 (184 codes) / 1 | _TBD_ |
 | Mean bin width (LSB) | **21.7 ps** | _TBD_ |
-| Largest / smallest bin | 65.6 ps / 0.0 ps | _TBD_ |
-| Raw DNL | -1.00 .. +2.02 LSB | _TBD_ |
-| Raw INL (bin centres, code density) | -6.34 .. +1.59 LSB | _TBD_ |
+| Largest / smallest bin | 65.5 ps / 0.0 ps | _TBD_ |
+| Raw DNL | -1.00 .. +2.01 LSB | _TBD_ |
+| Raw INL (bin centres, code density) | -6.33 .. +1.53 LSB | _TBD_ |
 | Uncalibrated INL on validation set (ideal 22 ps LUT) | max \|INL\| 3.8 LSB | _TBD_ |
-| **Residual INL after calibration** (validation set) | **max 0.29 LSB (6.4 ps)** | _TBD_ |
-| RMS single-shot error, uncalibrated | 37.0 ps | _TBD_ |
+| **Residual INL after calibration** (validation set) | **max 0.26 LSB (5.7 ps)** | _TBD_ |
+| RMS single-shot error, uncalibrated | 37.1 ps | _TBD_ |
 | **RMS single-shot error, calibrated (headline)** | **11.7 ps** (target < 50, limit < 100) | _TBD_ |
-| Quantisation-only floor (from bin widths) | 10.9 ps | _TBD_ |
+| Quantisation-only floor (from bin widths) | 10.8 ps | _TBD_ |
 | Code-density width estimate vs model ground truth | 3.3 ps rms | n/a |
 | Saturated (coverage) hits, default chain | 0 / 3000 (max code 184 of 192) | _TBD_ (`sat_cnt`) |
 | Saturated hits, fast corner (20 ps/tap) | **150 / 3000 (5 %), FAIL** | n/a |
@@ -212,8 +215,8 @@ set: a **separate** 20 000 hits with known true times, never used for calibratio
 | Fmax / WNS at 250 MHz | n/a | _TBD_ |
 
 How to read this:
-- The calibrated 11.7 ps is what the model allows: sqrt(10.9^2 quantisation +
-  4^2 model jitter) = 11.6 ps. Real hardware adds clock jitter from the MMCM, supply
+- The calibrated 11.7 ps is what the model allows: sqrt(10.8^2 quantisation +
+  4^2 model jitter) = 11.5 ps. Real hardware adds clock jitter from the MMCM, supply
   noise, temperature drift between calibration and use, and hit-path jitter. Expect
   it to be worse, typically tens of ps for a single Artix-7 chain. The < 50 ps target
   is plausible, but only a hardware measurement can confirm it.
@@ -242,7 +245,7 @@ python -m venv .venv
 .venv\Scripts\activate            # Linux: source .venv/bin/activate
 pip install -r requirements.txt   # Icarus Verilog must be on PATH
 
-python sim/run_tests.py                       # all configs (~12 min, mostly code density)
+python sim/run_tests.py                       # all configs (~10 min, mostly code density)
 python sim/run_tests.py --config default --suite top --test test_boundary
 ```
 
