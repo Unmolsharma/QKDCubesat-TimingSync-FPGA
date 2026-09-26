@@ -141,6 +141,46 @@ knob.
 - **Drop-and-count, never overwrite.** A 1-deep output register plus a FIFO in the UART
   readout. Everything lost is counted (`drop_cnt`, `short_cnt`, `sat_cnt`).
 
+### Hardware readout
+
+- **UART:** 2 000 000 baud 8N1. That is exact from 250 MHz (divisor 125), and the
+  FT2232H generates it exactly too. Throughput is 200 kB/s: ~100 k fine codes/s or
+  ~28 k full timestamps/s.
+- **Framing** is self-synchronising: only header bytes have bit 7 set, so the PC can
+  join mid-stream.
+
+  | Type | Bytes | Payload |
+  |---|---|---|
+  | 0 FINE | 2 | fine code |
+  | 1 TIMESTAMP | 7 | {coarse, fine} |
+  | 2 STATUS | 8 | drop / short / sat counters; every 0.27 s and after reset |
+
+  Header byte `1TTPPPPP`, continuation bytes `0PPPPPPP`, payload MSB first. Parsed
+  by `scripts/capture.py`. The same parser checks the RTL in `test_uart.py`.
+- **Bursts:** a 512-entry BRAM FIFO. When it is full, new hits are dropped and
+  counted, never overwritten. Drops depend on FIFO occupancy, not on the fine code,
+  so they don't bias code density.
+- **On-chip hit source (SW0):** a 5-LUT ring oscillator divided by 2^12. It needs
+  `DONT_TOUCH` and `ALLOW_COMBINATORIAL_LOOPS` (both in RTL/XDC) and its own
+  asynchronous clock. Caveat: a ring on the same die can injection-lock to the
+  system clock, so cross-check against an external generator.
+
+### Where the spec was changed
+
+- **Hit input to the chain:** `CI` became `CYINIT`. `CI` of the first CARRY4 cannot
+  be driven from fabric on 7-series.
+- **Priority-encoder claim:** a bubble does not make a priority encoder
+  non-monotonic when thresholds are fixed. What it does is create missing codes and
+  a single-FF dependency. The comments and the sweep test say that and measure it.
+- **Chain coverage:** 192 x 22 ps leaves a thin margin (see above). The limit comes
+  from the 50-row clock region, so no parameter change inside one region fixes it.
+- **Placement constraints:** per-tap `LOC`/`BEL` constraints live in a Tcl file
+  (`constraints/tdc_chain_place.tcl`) instead of the XDC, because they need a loop and
+  XDC only supports a Tcl subset. The pblock stays in the XDC, and the Tcl derives
+  every location from it.
+- **Build order:** the calibration LUT module was written in step 2 (not 3), because
+  `tdc_top` needs its calibrated output port.
+
 ---
 
 ## Results
