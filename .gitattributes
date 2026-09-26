@@ -1,0 +1,3 @@
+# Keep LF everywhere so scripts behave identically on the Linux lab machine.
+* text=auto eol=lf
+*.png binary

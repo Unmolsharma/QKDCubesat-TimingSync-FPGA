@@ -1,0 +1,12 @@
+.venv/
+build/
+sim/sim_build/
+sim/out/
+sim/results.xml
+__pycache__/
+*.pyc
+*.vcd
+*.fst
+.Xil/
+*.jou
+*.log
