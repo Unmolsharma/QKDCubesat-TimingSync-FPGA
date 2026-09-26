@@ -31,11 +31,12 @@ ROOT = SIM_DIR.parent
 RTL = sorted((ROOT / "rtl").glob("*.v"))
 SIM_LUT = SIM_DIR / "out" / "default" / "calib_lut.mem"
 
-# suite name -> (python module, HDL toplevel)
+# suite name -> (python module, HDL toplevel, extra build parameters)
 SUITES = {
-    "frontend": ("test_frontend", "tdc_frontend"),
-    "top":      ("test_top", "tdc_top"),
-    "uart":     ("test_uart", "tdc_arty_top"),
+    "frontend": ("test_frontend", "tdc_frontend", {}),
+    "top":      ("test_top", "tdc_top", {}),
+    "uart":     ("test_uart", "tdc_arty_top",
+                 {"FIFO_AW": 3, "STATUS_PERIOD": 50000, "RO_DIV_BITS": 4}),
 }
 
 CONFIGS = {
@@ -76,8 +77,9 @@ def junit_results(xml_path: Path):
 
 def run(config: str, suite: str, only_test=None, extra_params=None):
     cfg = CONFIGS[config]
-    module, top = SUITES[suite]
-    params = dict(cfg["params"])
+    module, top, suite_params = SUITES[suite]
+    params = dict(suite_params)
+    params.update(cfg["params"])
     params.update(extra_params or {})
     build_dir = SIM_DIR / "sim_build" / f"{config}_{suite}"
     out = SIM_DIR / "out" / config
