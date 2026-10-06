@@ -4,7 +4,7 @@ All times inside the testbench are integer femtoseconds (the build uses a
 1ns/1fs timescale) to avoid float rounding when placing hits a few ps apart.
 
 Everything these tests measure is SIMULATED against the behavioural delay-line
-model in rtl/tdc_delay_line.v. None of it describes real hardware.
+model in rtl/tdc/tdc_delay_line.v. None of it describes real hardware.
 """
 
 import os
@@ -28,7 +28,7 @@ def now_fs() -> int:
 
 def out_dir() -> Path:
     """Where tests drop CSVs for the Python analysis (sim/out/<config>)."""
-    d = Path(os.environ.get("TDC_OUT", Path(__file__).parent / "out" / "adhoc"))
+    d = Path(os.environ.get("TDC_OUT", Path(__file__).resolve().parents[1] / "out" / "adhoc"))
     d.mkdir(parents=True, exist_ok=True)
     return d
 

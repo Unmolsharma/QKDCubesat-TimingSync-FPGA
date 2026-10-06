@@ -10,7 +10,7 @@ control/calibration FSM) are out of scope here. The TDC output interface is desi
 so those blocks can consume it directly.
 
 > **About the numbers.** Every figure in this README comes from **simulation**
-> against a behavioural carry-chain model (`rtl/tdc_delay_line.v`), unless it's
+> against a behavioural carry-chain model (`rtl/tdc/tdc_delay_line.v`), unless it's
 > explicitly marked as hardware. The model has randomised, seeded tap delays,
 > ultra-wide and near-zero bins, per-tap skew (bubbles) and clock jitter. It is
 > not a timing-accurate model of real silicon. Hardware numbers go in the
@@ -104,6 +104,12 @@ doesn't cover the period. The fallback, documented but not built, is two chains 
 adjacent columns (or one chain continuing into the next clock region with its own
 calibration), read out as one longer line. Raising the clock to ~275 MHz is the other
 knob.
+
+At build time, `scripts/build.tcl` also sums Vivado's static-timing delays along the
+chain (CYINIT of CARRY4 #0 to CO[3] of #47) and writes `build/reports/chain_delay.rpt`:
+**PASS** if the fast-corner minimum exceeds 4.04 ns, otherwise **WARN**. That is an
+early warning from the timing model only. `sat_cnt` on the real board is the decisive
+check.
 
 ---
 
@@ -247,6 +253,7 @@ pip install -r requirements.txt   # Icarus Verilog must be on PATH
 
 python sim/run_tests.py                       # all configs (~10 min, mostly code density)
 python sim/run_tests.py --config default --suite top --test test_boundary
+python sim/run_tests.py --block tdc           # one block's suites (tdc, nco, integration)
 ```
 
 Configurations: `default`; `nojitter` (strict monotonicity); `fast_corner` (coverage
@@ -276,10 +283,16 @@ calibration on the lab machine.
 ## Repo layout
 
 ```
-rtl/          Verilog (all Xilinx primitives behind `ifdef SYNTHESIS)
-sim/          cocotb tests + run_tests.py runner + Linux Makefile
-constraints/  XDC (clocks, pins, pblock, false paths) + chain placement Tcl
-scripts/      build.tcl, calibrate.py, analyze.py, capture.py
-docs/         LAB_BUILD.md, plots
-build/        Vivado output (gitignored)
+rtl/tdc/          block 1: carry-chain TDC (all Xilinx primitives behind `ifdef SYNTHESIS)
+rtl/nco/          block 2: NCO, phase detector, loop filter, lock detector
+rtl/top/          board wrapper (tdc_arty_top), UART readout
+sim/run_tests.py  cocotb runner for every block (+ Linux Makefile)
+sim/tdc/          block 1 cocotb tests
+sim/nco/          block 2 cocotb tests
+sim/integration/  TDC -> NCO end-to-end tests
+model/            Python reference models (float + bit-exact fixed point)
+constraints/      XDC (clocks, pins, pblock, false paths) + chain placement Tcl
+scripts/          build.tcl, calibrate.py, analyze.py, capture.py
+docs/             LAB_BUILD.md, plots
+build/            Vivado output (gitignored)
 ```

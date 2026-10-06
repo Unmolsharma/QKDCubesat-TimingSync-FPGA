@@ -24,7 +24,7 @@ INPUT FORMAT (same for simulation and hardware)
 
 OUTPUT
   calib_lut.mem : 2^FINE_W lines, one hex word per line (PS_W bits), for
-                  $readmemh in rtl/tdc_calib_lut.v. Codes below the used range
+                  $readmemh in rtl/tdc/tdc_calib_lut.v. Codes below the used range
                   map to 0, codes above it to T_clk.
   --summary     : optional JSON with widths/DNL/INL statistics.
 

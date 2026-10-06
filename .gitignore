@@ -2,7 +2,7 @@
 build/
 sim/sim_build/
 sim/out/
-sim/results.xml
+sim/**/results.xml
 __pycache__/
 *.pyc
 *.vcd

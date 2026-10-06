@@ -32,8 +32,9 @@ in `constraints/tdc_arty_a7.xdc`.
 
 | File | What to check |
 |---|---|
-| `build/reports/summary.txt` | WNS >= 0 on `clk_sys`, chain placement PASS. Copy WNS/Fmax to the README table. |
+| `build/reports/summary.txt` | WNS >= 0 on `clk_sys`, chain placement PASS, chain delay PASS (or WARN, see below). Copy WNS/Fmax to the README table. |
 | `build/reports/chain_placement.rpt` | **RESULT: PASS**; 48 CARRY4 in one column (e.g. `SLICE_X12Y50`..`Y97`), a single clock region, no gaps, all 192 FFs in their CARRY4's slice. |
+| `build/reports/chain_delay.rpt` | **PASS** = static-timing min delay (fast corner) from `CYINIT` of CARRY4 #0 to `CO[3]` of #47 is > 4.04 ns. **WARN** means the line may not cover one 4 ns period at a fast corner: the build still completes, but treat `sat_cnt` on the board as decisive and expect to need the two-chain fallback. Also lists the slow-corner max and a per-CARRY4 breakdown. Record min/max in the README. *(This report has only been run against stubbed Vivado commands so far; check that the per-CARRY4 arc values look like ~50-150 ps on the first real build.)* |
 | `build/reports/utilization.rpt` | Slice LUTs / FFs / CARRY4 / BRAM for the README table. |
 | `build/reports/timing_summary.rpt` | No unconstrained paths other than the intentional ones (hit, switches, LEDs, UART). The chain itself must NOT appear as a failing path; if it does, the false path didn't match. |
 | `build/reports/methodology.rpt` | Expected: warnings about the ring oscillator's combinational loop and its asynchronous clock. Anything touching `u_dl` or `u_sync` needs investigating. |

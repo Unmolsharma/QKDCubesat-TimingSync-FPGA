@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Capture TDC data from the Arty A7 USB-UART and write calibrate.py's CSV format.
 
-LINK: 2 000 000 baud, 8N1 (see rtl/tdc_uart_readout.v).
+LINK: 2 000 000 baud, 8N1 (see rtl/top/tdc_uart_readout.v).
 
 FRAMES (self-synchronising: only header bytes have bit 7 set)
   header      1 T T P P P P P   (TT = type, 5 payload bits)

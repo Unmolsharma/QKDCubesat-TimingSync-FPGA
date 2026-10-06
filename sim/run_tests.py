@@ -4,8 +4,11 @@
     python sim/run_tests.py                      # everything
     python sim/run_tests.py --config default     # one model configuration
     python sim/run_tests.py --suite top --test test_smoke
+    python sim/run_tests.py --block tdc          # only one block's suites
 
-Model configurations (all SIMULATED, see rtl/tdc_delay_line.v):
+Tests live in sim/<block>/ (tdc, nco, integration); RTL is every .v under rtl/.
+
+Model configurations (all SIMULATED, see rtl/tdc/tdc_delay_line.v):
   default      TAP_NOM_PS=22, sigma 15 %, skew 6 ps, jitter 4 ps, SEED=1
   nojitter     same chain, JITTER_PS=0 (strict monotonicity check)
   fast_corner  TAP_NOM_PS=20: a faster (cold / fast-process) chain.
@@ -28,14 +31,14 @@ from cocotb_tools.runner import get_runner
 
 SIM_DIR = Path(__file__).resolve().parent
 ROOT = SIM_DIR.parent
-RTL = sorted((ROOT / "rtl").glob("*.v"))
+RTL = sorted((ROOT / "rtl").rglob("*.v"))
 SIM_LUT = SIM_DIR / "out" / "default" / "calib_lut.mem"
 
-# suite name -> (python module, HDL toplevel, extra build parameters)
+# suite name -> (block dir under sim/, python module, HDL toplevel, extra build parameters)
 SUITES = {
-    "frontend": ("test_frontend", "tdc_frontend", {}),
-    "top":      ("test_top", "tdc_top", {}),
-    "uart":     ("test_uart", "tdc_arty_top",
+    "frontend": ("tdc", "test_frontend", "tdc_frontend", {}),
+    "top":      ("tdc", "test_top", "tdc_top", {}),
+    "uart":     ("tdc", "test_uart", "tdc_arty_top",
                  {"FIFO_AW": 3, "STATUS_PERIOD": 50000, "RO_DIV_BITS": 4}),
 }
 
@@ -77,7 +80,7 @@ def junit_results(xml_path: Path):
 
 def run(config: str, suite: str, only_test=None, extra_params=None):
     cfg = CONFIGS[config]
-    module, top, suite_params = SUITES[suite]
+    block, module, top, suite_params = SUITES[suite]
     params = dict(suite_params)
     params.update(cfg["params"])
     params.update(extra_params or {})
@@ -102,10 +105,11 @@ def run(config: str, suite: str, only_test=None, extra_params=None):
         hdl_toplevel=top,
         testcase=tests,
         build_dir=build_dir,
-        test_dir=SIM_DIR,
+        test_dir=SIM_DIR / block,
         plusargs=[f"+TDC_MODEL_DUMP={(out / 'model_thresholds.csv').as_posix()}"],
         extra_env={"TDC_CONFIG": config, "TDC_OUT": str(out),
-                   "PYTHONPATH": os.pathsep.join([str(SIM_DIR), str(ROOT / "scripts")]),
+                   "PYTHONPATH": os.pathsep.join([str(SIM_DIR / block), str(ROOT / "model"),
+                                                 str(ROOT / "scripts")]),
                    **cfg.get("env", {})},
     )
     return [(config, suite, name, ok, name in cfg["xfail"]) for name, ok in junit_results(Path(xml))]
@@ -115,6 +119,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--config", choices=CONFIGS, action="append")
     ap.add_argument("--suite", choices=SUITES, action="append")
+    ap.add_argument("--block", choices=sorted({s[0] for s in SUITES.values()}), action="append")
     ap.add_argument("--test")
     args = ap.parse_args()
 
@@ -123,8 +128,11 @@ def main():
         for suite in CONFIGS[config]["suites"]:
             if args.suite and suite not in args.suite:
                 continue
-            if not (SIM_DIR / f"{SUITES[suite][0]}.py").exists():
-                print(f"[skip] {suite}: {SUITES[suite][0]}.py not written yet")
+            block, module = SUITES[suite][:2]
+            if args.block and block not in args.block:
+                continue
+            if not (SIM_DIR / block / f"{module}.py").exists():
+                print(f"[skip] {suite}: sim/{block}/{module}.py not written yet")
                 continue
             results.extend(run(config, suite, args.test))
 

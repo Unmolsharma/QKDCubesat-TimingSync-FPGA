@@ -383,7 +383,7 @@ async def test_code_density(dut):
 
     if CALIBRATED:
         # the RTL LUT must return exactly what the .mem file says
-        sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+        sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
         from calibrate import read_mem
         lut = read_mem(os.environ["TDC_LUT_FILE"])
         bad = [b for b in tb.beats if lut[b["fine"]] != b["fine_ps"]]

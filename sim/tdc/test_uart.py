@@ -19,7 +19,7 @@ from cocotb.triggers import ClockCycles, FallingEdge, ReadOnly, RisingEdge, Time
 
 from tdc_tb import NS, PS, now_fs, out_dir, pulse_train, val
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
 from capture import T_FINE, T_STATUS, T_TS, FrameParser  # noqa: E402
 
 BIT_FS = 125 * 4 * NS          # CLKS_PER_BIT * 4 ns
