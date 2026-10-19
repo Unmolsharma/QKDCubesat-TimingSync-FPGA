@@ -31,19 +31,27 @@ from cocotb_tools.runner import get_runner
 
 SIM_DIR = Path(__file__).resolve().parent
 ROOT = SIM_DIR.parent
-RTL = sorted((ROOT / "rtl").rglob("*.v"))
+# all RTL, plus simulation-only wrappers in sim/<block>/hdl/
+RTL = sorted((ROOT / "rtl").rglob("*.v")) + sorted(SIM_DIR.glob("*/hdl/*.v"))
 SIM_LUT = SIM_DIR / "out" / "default" / "calib_lut.mem"
 
-# suite name -> (block dir under sim/, python module, HDL toplevel, extra build parameters)
+# suite name -> (block dir under sim/, python module, HDL toplevel, extra build
+#                parameters[, extra environment])
 SUITES = {
     "frontend": ("tdc", "test_frontend", "tdc_frontend", {}),
     "top":      ("tdc", "test_top", "tdc_top", {}),
     "uart":     ("tdc", "test_uart", "tdc_arty_top",
                  {"FIFO_AW": 3, "STATUS_PERIOD": 50000, "RO_DIV_BITS": 4}),
+    # block 2: 100 MHz source (M1) and 500 MHz source (M2)
+    "nco":      ("nco", "test_nco", "nco_tb_top", {}, {"NCO_FSRC": "100e6"}),
+    "nco500":   ("nco", "test_nco", "nco_tb_top", {"F_SRC_HZ": 500000000, "T_SLOT_PS": 2000},
+                 {"NCO_FSRC": "500e6"}),
 }
+NCO500_TESTS = ["test_static_lock", "test_ppm_sweep", "test_jitter_sweep", "test_gap_reacquire"]
 
 CONFIGS = {
-    "default": dict(params={}, suites=["frontend", "top", "uart"], xfail=set()),
+    "default": dict(params={}, suites=["frontend", "top", "uart", "nco", "nco500"],
+                    tests={"nco500": NCO500_TESTS}, xfail=set()),
     "nojitter": dict(params={"JITTER_PS": 0.0}, suites=["frontend"],
                      tests={"frontend": ["test_sweep_monotonic"]}, xfail=set()),
     "fast_corner": dict(params={"TAP_NOM_PS": 20.0},
@@ -80,7 +88,8 @@ def junit_results(xml_path: Path):
 
 def run(config: str, suite: str, only_test=None, extra_params=None):
     cfg = CONFIGS[config]
-    block, module, top, suite_params = SUITES[suite]
+    block, module, top, suite_params = SUITES[suite][:4]
+    suite_env = SUITES[suite][4] if len(SUITES[suite]) > 4 else {}
     params = dict(suite_params)
     params.update(cfg["params"])
     params.update(extra_params or {})
@@ -110,7 +119,7 @@ def run(config: str, suite: str, only_test=None, extra_params=None):
         extra_env={"TDC_CONFIG": config, "TDC_OUT": str(out),
                    "PYTHONPATH": os.pathsep.join([str(SIM_DIR / block), str(ROOT / "model"),
                                                  str(ROOT / "scripts")]),
-                   **cfg.get("env", {})},
+                   **cfg.get("env", {}), **suite_env},
     )
     return [(config, suite, name, ok, name in cfg["xfail"]) for name, ok in junit_results(Path(xml))]
 
