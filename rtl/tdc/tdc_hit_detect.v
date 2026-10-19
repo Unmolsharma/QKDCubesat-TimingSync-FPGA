@@ -55,7 +55,7 @@
 
 module tdc_hit_detect #(
     parameter integer FINE_W      = 9,
-    parameter integer COARSE_W    = 32,
+    parameter integer COARSE_W    = 48,
     parameter integer CONFIRM_CYC = 3      // max samples to wait for "full"
 )(
     input  wire                clk,

@@ -43,7 +43,7 @@ module tdc_arty_top #(
     output wire [3:0] led,
     output wire       uart_rxd_out
 );
-    localparam integer FINE_W = 9, COARSE_W = 32, PS_W = 16;
+    localparam integer FINE_W = 9, COARSE_W = 48, PS_W = 16;
 
     // ---------------- clocking ----------------
     wire clk, locked;
@@ -156,6 +156,8 @@ module tdc_arty_top #(
         .drop_cnt  (drop_cnt),
         .short_cnt (short_cnt),
         .sat_cnt   (sat_cnt),
+        .tlm_en    (1'b0),                 // no loop telemetry in the block 1 wrapper
+        .tlm_data  (173'd0),
         .tx        (uart_rxd_out)
     );
 

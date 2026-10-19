@@ -12,16 +12,17 @@
 // of "count - DELAY" makes the alignment exact by construction and costs only
 // DELAY*COARSE_W FFs.
 //
-// 32 bits at 250 MHz wraps every 17.2 s. That is fine for local timestamps.
-// The tracking loop (block 2) works with differences, which are
-// wrap-safe in modular arithmetic as long as intervals are < 17 s. Widen
-// COARSE_W if a pass-length absolute time base is ever needed on-chip.
+// 48 bits at 250 MHz wraps every 13 days, so every timestamp of a ~6 min
+// satellite pass is unique (block 1 used 32 bits = 17.2 s). Unique
+// timestamps are needed by block 2's 48-bit slot index and by any later
+// two-way time transfer, which compares timestamps across the whole pass.
+// Cost: 16 more counter bits and 16 x DELAY more FFs in the alignment line.
 // =============================================================================
 `timescale 1ns/1fs
 `default_nettype none
 
 module tdc_coarse_counter #(
-    parameter integer COARSE_W = 32,
+    parameter integer COARSE_W = 48,
     parameter integer DELAY    = 4
 )(
     input  wire                clk,

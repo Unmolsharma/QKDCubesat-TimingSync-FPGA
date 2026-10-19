@@ -48,7 +48,7 @@
 module tdc_top #(
     parameter integer NUM_CARRY4    = 48,
     parameter integer FINE_W        = 9,
-    parameter integer COARSE_W      = 32,
+    parameter integer COARSE_W      = 48,
     parameter integer PS_W          = 16,
     parameter integer IDEAL_LSB_PS  = 22,
     parameter         LUT_FILE      = "",

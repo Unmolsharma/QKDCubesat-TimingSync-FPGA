@@ -47,10 +47,11 @@ SUITES = {
     "nco500":   ("nco", "test_nco", "nco_tb_top", {"F_SRC_HZ": 500000000, "T_SLOT_PS": 2000},
                  {"NCO_FSRC": "500e6"}),
 }
+SUITES["integ"] = ("integration", "test_tdc_nco", "tdc_nco_tb_top", {})
 NCO500_TESTS = ["test_static_lock", "test_ppm_sweep", "test_jitter_sweep", "test_gap_reacquire"]
 
 CONFIGS = {
-    "default": dict(params={}, suites=["frontend", "top", "uart", "nco", "nco500"],
+    "default": dict(params={}, suites=["frontend", "top", "uart", "nco", "nco500", "integ"],
                     tests={"nco500": NCO500_TESTS}, xfail=set()),
     "nojitter": dict(params={"JITTER_PS": 0.0}, suites=["frontend"],
                      tests={"frontend": ["test_sweep_monotonic"]}, xfail=set()),
