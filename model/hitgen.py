@@ -13,6 +13,14 @@ What the stream models
   sparse streams cost nothing to generate.
 * Each detection gets Gaussian timing jitter (detector + source + TDC), RMS
   `jitter_ps`.
+* Optional SPAD DIFFUSION TAIL: a fraction `tail_frac` of detections gets an
+  extra exponentially distributed delay with mean `tail_tau_ps`. Thick
+  silicon SPADs show exactly this shape: a ~100-200 ps RMS Gaussian core
+  plus a slow tail from carriers generated below the junction that diffuse
+  in before triggering. (Typical datasheet shapes: tail containing 5-20 % of
+  the counts, decay constant 100-500 ps.) The tail delays photons, so it
+  shifts the mean arrival time (a constant the loop absorbs) and pushes some
+  photons out of the gate window or even into the next slot.
 * Dark counts: a Poisson process of rate `dark_hz`, uniform in time.
 * Gaps: optional time windows in which the source is off (cloud, pointing
   loss); dark counts continue.
@@ -41,7 +49,9 @@ class StreamCfg:
     ppm: float = 0.0               # source rate offset vs nominal, in ppm
     ramp_ppm_s: float = 0.0        # linear drift of that offset
     p_det: float = 1e-2            # detection probability per slot
-    jitter_ps: float = 200.0       # RMS, Gaussian
+    jitter_ps: float = 200.0       # RMS, Gaussian core
+    tail_frac: float = 0.0         # fraction of detections with a diffusion tail
+    tail_tau_ps: float = 300.0     # mean extra delay of a tail detection (exponential)
     dark_hz: float = 0.0           # uniform noise counts
     duration_s: float = 1e-3
     t_offset_ps: float | None = None   # arrival time of slot 0; random if None
@@ -95,6 +105,9 @@ def generate(cfg: StreamCfg):
         keep &= ~((t_true >= g0 * 1e12) & (t_true < g1 * 1e12))
     k, t_true = k[keep], t_true[keep]
     t_sig = t_true + rng.normal(0.0, cfg.jitter_ps, size=len(k))
+    if cfg.tail_frac > 0:
+        tail = rng.random(len(k)) < cfg.tail_frac
+        t_sig[tail] += rng.exponential(cfg.tail_tau_ps, size=int(tail.sum()))
 
     # --- dark counts
     n_dark = rng.poisson(cfg.dark_hz * cfg.duration_s)

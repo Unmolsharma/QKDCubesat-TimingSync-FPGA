@@ -401,6 +401,86 @@ interpolation) + one for e² + one for residual_ps, an 88-bit phase adder, a
 | ![lock vs rate](docs/img/nco_lock_vs_rate.png) | ![Doppler](docs/img/nco_ramp_error.png) |
 | ![lock trace](docs/img/nco_lock_trace.png) | |
 
+### Operating limits: jitter, dark counts, SPAD tail (float model, SIMULATED)
+
+`model/loop_limits.py`, 16 trials per point, initial offset uniform in ±100 ppm,
+~1×10^5 accepted photons/s, dark counts 10 % of signal unless varied. Success =
+lock within 20 000 hits, then 2 000 signal photons with no unlock and no slip.
+"Tuned" uses the runtime threshold inputs only; no RTL change.
+
+**Maximum photon jitter (RMS) that still locks with 0 slips:**
+
+| | 100 MHz | 500 MHz |
+|---|---|---|
+| Default settings | **1 200 ps** (0.12 slot) | **210 ps** (0.105 slot) |
+| Tuned: gate 1/4, lock 1/20, unlock 0.07 | **1 600 ps** (0.16 slot) | **350 ps** (0.175 slot) |
+| Wrong-slot photons from jitter alone at the tuned limit | 2.5e-3 | 4.7e-3 |
+
+**Does ~150 ps Si SPAD jitter block M2 at 500 MHz? No.** 150 ps is 0.075 slot:
+it locks in 100 % of trials with 0 slips, and the wrong-slot rate from the jitter
+itself is ~1e-11. One setting to change: with the default gate (±1/8 slot =
+±250 ps = ±1.7σ) about **10 % of the real photons are flagged as noise**. Use
+gate = 1/4 slot at 500 MHz (0.16 % flagged); dark-count rejection then drops
+from 75 % to 50 %.
+
+![jitter limit](docs/img/nco_jitter_limit.png)
+
+**Dark counts (100 MHz, p = 1e-3, 200 ps):**
+
+| | dark/signal ratio up to which lock is declared and held (100 % of trials) | next point |
+|---|---|---|
+| Default (lock 1/64, unlock 1/16, average 2^-5) | **0.5** | 0.6: 81 %, ≥ 0.8: 0 % |
+| Tuned (lock 1/20, unlock 0.07, acquisition average 2^-6) | **1.5** | 2.0: 56 % (false unlocks start), 3.0: 0 % |
+
+The limit is the e² metric: dark counts at ratio r raise the locked average to
+≈ (σ² + r/12)/(1 + r), so the lock threshold has to sit above that and the
+unlock threshold above it again, both below the random-phase value 1/12.
+0 undetected slips at every point, default or tuned.
+
+![dark-count limit](docs/img/nco_dark_limit.png)
+
+**Are the thresholds runtime-settable?** In the RTL, yes: `cfg_gate_thr`,
+`cfg_gate_en`, `cfg_lock_thr`, `cfg_unlock_thr`, `cfg_mse_shift`,
+`cfg_mse_shift_trk`, `cfg_rej_max`, `cfg_to_shift`, `cfg_slip_thr`,
+`cfg_slip_unlock`, `cfg_kp_acq`, `cfg_kp_trk`, `cfg_gear_log2` and the τ override
+are plain input ports of `nco_top`, read on every hit, not parameters. What
+does not exist yet is a register file that sets them over a command link. The
+M1 top ties them to the defaults, and the control block will own them.
+Changing them mid-lock is safe by construction (every decision reads the
+current value), but the bit-exact tests use a constant configuration.
+
+**SPAD timing tail (Gaussian core + exponential diffusion tail, `hitgen.py`
+`tail_frac`/`tail_tau_ps`), accepted rate 1e5/s:**
+
+| Case | lock OK | undetected slips | photons in wrong slot | of which NOT flagged (→ QBER) | real photons gated | mean shift |
+|---|---|---|---|---|---|---|
+| 100 MHz, 150 ps core | 100 % | 0 | 0 | 0 | 0 | — |
+| 100 MHz, 150 ps + 15 % tail, τ = 300 ps | 100 % | 0 | 0 | 0 | 0.27 % | +4 ps |
+| 500 MHz, 150 ps core | 100 % | 0 | 0 | 0 | 9.9 % | — |
+| 500 MHz, 150 ps + 15 %, 300 ps | 100 % | 0 | **0.63 %** | **0.06 %** | 15.7 % | +25 ps |
+| 500 MHz, 150 ps + 20 %, 500 ps | 100 % | 0 | **2.8 %** | **0.35 %** | 20 % | +30 ps |
+| 500 MHz, 50 ps + 15 %, 300 ps | 100 % | 0 | 0.58 % | 0.05 % | 6.5 % | +26 ps |
+
+Slip hunt with the 15 %/300 ps tail, 256 runs each: **0 undetected slips** at
+100 MHz and 500 MHz. What changes with the tail:
+* The loop centres on the *mean* arrival time (+25 ps at 500 MHz). That is a
+  constant offset, absorbed like the cable delay.
+* At 500 MHz the tail, not the core, sets the slot-error rate. Tail photons
+  delayed by more than half a slot are counted in the next slot. Most land
+  outside the gate and are only lost, but ~0.06 % (15 %/300 ps) to ~0.35 %
+  (20 %/500 ps) land inside the next slot's gate and would be sifting errors.
+  That is a QBER floor the detector sets and no loop can remove. It is
+  negligible at 100 MHz (a 300 ps tail never reaches 5 ns).
+* The lock/slip behaviour itself does not change.
+
+**One more M2 finding from these runs: pull-in from ±100 ppm is a hit-rate
+limit that scales with the source frequency.** At 500 MHz a ±100 ppm error is
+5× more slots of drift per second than at 100 MHz. PI-only acquisition from
+±100 ppm drops to 81 % at 1e4 photons/s and ~40 % at 3e3/s, both with and
+without the tail. From ±1 ppm it is 100 % at every rate down to 3e3/s. For M2
+at low rates: GPS-disciplined clocks (±1 ppm), Doppler pre-correction through
+the external correction port, or the sweep-and-dwell aid.
+
 ### Sweep-and-dwell acquisition aid (designed, not built)
 
 Needed only for ±100 ppm initial uncertainty below ~3e-5 per slot. Step the
@@ -448,7 +528,11 @@ phase histories in software) would be faster if a processor is available.
   model's POP_GAP and latency are parameters to change in both RTL and model).
 * Ramp tracking below ~1e4 hits/s at 500 MHz needs feed-forward or type-3 (above).
 * ±100 ppm acquisition below 3e-5 needs sweep-and-dwell or GPS-disciplined clocks.
-* Lock declaration degrades with dark counts above ~60 % of the signal rate.
+* Lock declaration degrades with dark counts above 50 % of the signal rate with
+  default thresholds (150 % tuned); see "Operating limits".
+* At 500 MHz the SPAD diffusion tail sets a slot-error / QBER floor
+  (0.06–0.35 % unflagged) and the default gate loses ~10 % of photons at
+  150 ps jitter: use gate = 1/4 slot for M2.
 * All of this is simulation against a behavioural TDC and Gaussian jitter; real
   detector jitter tails (afterpulsing, non-Gaussian) are not modelled.
 
@@ -468,6 +552,7 @@ python sim/run_tests.py --block tdc           # one block's suites (tdc, nco, in
 python sim/run_tests.py --suite nco           # block 2 RTL, 100 MHz (nco500: 500 MHz)
 python model/loop_float.py                    # block 2 sweeps + plots (~3 min, 16 cores)
 python model/loop_fixed.py                    # fixed-point model sanity run
+python model/loop_limits.py                   # jitter / dark-count / SPAD-tail limits (~30 s)
 ```
 
 Configurations: `default`; `nojitter` (strict monotonicity); `fast_corner` (coverage
