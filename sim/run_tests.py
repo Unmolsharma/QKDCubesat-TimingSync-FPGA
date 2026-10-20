@@ -48,10 +48,13 @@ SUITES = {
                  {"NCO_FSRC": "500e6"}),
 }
 SUITES["integ"] = ("integration", "test_tdc_nco", "tdc_nco_tb_top", {})
+# phase 2: M1 rehearsal (board top + emulator on its own clock)
+SUITES["m1"] = ("integration", "test_m1", "m1_tb_top", {})
+SUITES["emu"] = ("integration", "test_emulator", "sat_emulator", {})
 NCO500_TESTS = ["test_static_lock", "test_ppm_sweep", "test_jitter_sweep", "test_gap_reacquire"]
 
 CONFIGS = {
-    "default": dict(params={}, suites=["frontend", "top", "uart", "nco", "nco500", "integ"],
+    "default": dict(params={}, suites=["frontend", "top", "uart", "nco", "nco500", "integ", "emu", "m1"],
                     tests={"nco500": NCO500_TESTS}, xfail=set()),
     "nojitter": dict(params={"JITTER_PS": 0.0}, suites=["frontend"],
                      tests={"frontend": ["test_sweep_monotonic"]}, xfail=set()),
