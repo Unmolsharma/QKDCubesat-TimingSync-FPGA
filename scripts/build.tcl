@@ -6,10 +6,11 @@
 #   vivado -mode batch -source scripts/build.tcl
 #   vivado -mode batch -source scripts/build.tcl -tclargs lut=calib/calib_lut.mem
 #   vivado -mode batch -source scripts/build.tcl -tclargs part=xc7a35ticsg324-1L
+#   vivado -mode batch -source scripts/build.tcl -tclargs top=m1_arty_top   (M1 demo)
 #
 # All paths are derived from this script's location, so it works from any
 # working directory and on any OS. Outputs go to build/ (gitignored):
-#   build/tdc_arty_top.bit, build/*.dcp
+#   build/<top>.bit, build/*.dcp
 #   build/reports/  utilization, timing, clocks, DRC, methodology,
 #                   chain_placement.rpt (PASS/FAIL), chain_delay.rpt
 #                   (PASS/WARN), summary.txt (WNS / Fmax)
@@ -23,6 +24,7 @@ set LUT  ""
 foreach arg $argv {
     if {[regexp {^part=(.+)$} $arg -> v]} { set PART $v }
     if {[regexp {^lut=(.+)$}  $arg -> v]} { set LUT  $v }
+    if {[regexp {^top=(.+)$}  $arg -> v]} { set TOP  $v }
 }
 
 set ROOT [file normalize [file join [file dirname [info script]] ..]]
@@ -54,6 +56,10 @@ report_utilization -file [file join $RPT utilization_synth.rpt]
 # Constraints are applied to the synthesised netlist: the pblock and chain
 # placement refer to cells that only exist after synthesis.
 read_xdc [file join $ROOT constraints tdc_arty_a7.xdc]
+if {$TOP eq "m1_arty_top"} {
+    # emulator clock input + emulator pulse output (docs/M1_DEMO.md)
+    read_xdc [file join $ROOT constraints m1_arty_a7.xdc]
+}
 source   [file join $ROOT constraints tdc_chain_place.tcl]
 
 # ---- implementation ----
@@ -220,5 +226,5 @@ if {$wns < 0} {
 }
 
 # ---- bitstream ----
-write_bitstream -force [file join $OUT tdc_arty_top.bit]
-puts "== done: [file join $OUT tdc_arty_top.bit]"
+write_bitstream -force [file join $OUT $TOP.bit]
+puts "== done: [file join $OUT $TOP.bit]"

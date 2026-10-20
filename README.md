@@ -10,6 +10,10 @@ satellite-to-ground BB84 QKD (modelled on the Jinan-1 architecture):
   noisy photon timestamps: an NCO, phase detector, noise gate, gear-shifted PI loop
   and lock detector, verified bit-exact against a fixed-point model. See
   [Block 2](#block-2-clock-recovery-nco--phase-detector--pi-loop) below.
+* **M1 rehearsal** (tag `v0.3-m1-sim`): a satellite emulator on its own clock and
+  the M1 board top, simulated end to end. See
+  [M1 rehearsal](#m1-rehearsal-in-simulation-satellite-emulator--board-top) and
+  [docs/M1_DEMO.md](docs/M1_DEMO.md).
 
 Optical-link framing, two-way time transfer and the control FSM are later blocks.
 
@@ -537,6 +541,57 @@ phase histories in software) would be faster if a processor is available.
   detector jitter tails (afterpulsing, non-Gaussian) are not modelled.
 
 
+---
+
+# M1 rehearsal in simulation (satellite emulator + board top)
+
+> SIMULATED end to end. On lab day the same bitstream logic should
+> "just lock": [docs/M1_DEMO.md](docs/M1_DEMO.md) has the procedure, pins
+> and proposed pass criteria.
+
+```
+ generator (own crystal, ~100 MHz) -> jb[0] -> sat_emulator --emu_out--> jumper --> ja[0]
+                                              (xorshift32, p/slot,          |
+                                               15 ns pulses, true slot)     v
+ CLK100MHZ -> MMCM -> 250 MHz ------------------------------------> tdc_top -> nco_top
+                                                                    UART: STATUS + TELEMETRY
+```
+
+* `rtl/top/sat_emulator.v`: runs entirely on its own clock. It picks slots
+  with a 32-bit xorshift generator (`x < p·2^32`), emits a 1.5-period
+  (15 ns) pulse through a DDR output register, suppresses a slot right after
+  an emitted one (overlapping pulses), and reports the true slot index of
+  every pulse on a side channel. `drop_all` makes a signal gap.
+* `rtl/top/m1_arty_top.v`: emulator → Pmod JA2 → jumper → JA1 → TDC → NCO →
+  UART, plus switches (p, gap, raw timestamps) and LEDs (locked, unlock seen).
+* `constraints/m1_arty_a7.xdc`, `scripts/build.tcl -tclargs top=m1_arty_top`:
+  **not yet run in Vivado; the two new pins must be checked** (M1_DEMO.md).
+
+**Emulator check (`sim/integration/test_emulator.py`):** P(select) = 0.00997 vs
+0.01, adjacent-slot pair rate 1.08e-4 vs p² = 1.0e-4, emitted fraction = p/(1+p),
+pulses exactly 15.0 ns. The first draft used a plain LFSR, whose consecutive
+states are shifted copies, so `state < threshold` fired in clusters. Its
+adjacent-pair rate was 5.2e-3, 50× too high (175σ). The first rehearsal
+run showed it as 706 suppressed slots for 1 464 emitted. Replaced by
+xorshift32; that run's numbers were discarded.
+
+**Rehearsal (`sim/integration/test_m1.py`, emulator at +20 ppm, p = 1e-2):**
+
+| Criterion | Result (SIMULATED) |
+|---|---|
+| Lock time (float model predicts ~420 hits ≈ 0.42 ms) | **395 µs**, 375 hits |
+| Frequency estimate vs true +20.000 ppm | **+20.018 ppm** mean over the hold, 0.046 ppm RMS |
+| Slot of every emitted-and-detected pulse vs emulator's true slot | **0 slips** over 1 901 locked photons (one constant offset per lock run) |
+| 0.5 ms gap (`sw[2]`) | unlock reported (counter, LED, telemetry), **LOCK again 354 µs** after the pulses return |
+| NCO results vs `loop_fixed.py` (fed with the TDC's real output) | bit-exact on all 2 647 hits |
+| UART | 31 frames, 0 parser errors; telemetry LOCK frames read 19.94–20.01 ppm; last frame LOCK, unlock = 1; STATUS drop/short/sat = 0 |
+| Pulses | 2 666 emitted, 26 adjacent slots suppressed (1.0 %), 2 647 timestamped (19 lost to TDC dead time) |
+
+Note: after a gap, the hit-spacing estimate includes the long gap interval,
+so the integral gain is temporarily smaller; re-lock still took less time
+than the first lock. Capping one interval's contribution would remove the
+effect (a candidate tweak, not needed for M1).
+
 ## Running it
 
 ### Simulation (Windows or Linux, no Vivado needed)
@@ -550,6 +605,7 @@ python sim/run_tests.py                       # all configs (~30 min, mostly cod
 python sim/run_tests.py --config default --suite top --test test_boundary
 python sim/run_tests.py --block tdc           # one block's suites (tdc, nco, integration)
 python sim/run_tests.py --suite nco           # block 2 RTL, 100 MHz (nco500: 500 MHz)
+python sim/run_tests.py --suite m1            # M1 rehearsal (~7 min; emu: emulator statistics)
 python model/loop_float.py                    # block 2 sweeps + plots (~3 min, 16 cores)
 python model/loop_fixed.py                    # fixed-point model sanity run
 python model/loop_limits.py                   # jitter / dark-count / SPAD-tail limits (~30 s)
