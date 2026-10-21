@@ -34,6 +34,7 @@ ROOT = SIM_DIR.parent
 # all RTL, plus simulation-only wrappers in sim/<block>/hdl/
 RTL = sorted((ROOT / "rtl").rglob("*.v")) + sorted(SIM_DIR.glob("*/hdl/*.v"))
 SIM_LUT = SIM_DIR / "out" / "default" / "calib_lut.mem"
+MULTI_LUTS = SIM_DIR / "out" / "default" / "multi_luts"     # per-channel LUTs (phase 3)
 
 # suite name -> (block dir under sim/, python module, HDL toplevel, extra build
 #                parameters[, extra environment])
@@ -52,17 +53,27 @@ SUITES["integ"] = ("integration", "test_tdc_nco", "tdc_nco_tb_top", {})
 SUITES["m1"] = ("integration", "test_m1", "m1_tb_top", {})
 SUITES["emu"] = ("integration", "test_emulator", "sat_emulator", {})
 SUITES["ncocmd"] = ("nco", "test_nco_cmd", "nco_cmd_tb_top", {}, {"NCO_FSRC": "100e6"})
+# phase 3: multi-channel TDC (5 channels, and the 1-channel configuration)
+SUITES["multi"] = ("tdc", "test_multi", "tdc_multi_top", {"NUM_CH": 5, "CH_W": 3})
+SUITES["multi1"] = ("tdc", "test_multi", "tdc_multi_top", {"NUM_CH": 1, "CH_W": 1})
 NCO500_TESTS = ["test_static_lock", "test_ppm_sweep", "test_jitter_sweep", "test_gap_reacquire"]
 
 CONFIGS = {
-    "default": dict(params={}, suites=["frontend", "top", "uart", "nco", "nco500", "ncocmd", "integ", "emu", "m1"],
-                    tests={"nco500": NCO500_TESTS}, xfail=set()),
+    "default": dict(params={}, suites=["frontend", "top", "uart", "multi", "multi1", "nco", "nco500",
+                                       "ncocmd", "integ", "emu", "m1"],
+                    tests={"nco500": NCO500_TESTS,
+                           "multi1": ["test_multi_random", "test_multi_skew"]}, xfail=set()),
     "nojitter": dict(params={"JITTER_PS": 0.0}, suites=["frontend"],
                      tests={"frontend": ["test_sweep_monotonic"]}, xfail=set()),
     "fast_corner": dict(params={"TAP_NOM_PS": 20.0},
                         suites=["frontend", "top"],
                         tests={"frontend": ["test_coverage"], "top": ["test_top_coverage"]},
                         xfail={"test_coverage", "test_top_coverage"}),
+    # phase 3: the 5-channel TDC with one code-density LUT per channel, built by
+    # calibrate.py --per-channel from the default config's multi-channel run
+    "multi_calibrated": dict(params={"LUT_DIR": f'"{MULTI_LUTS.as_posix()}"'}, suites=["multi"],
+                             tests={"multi": ["test_multi_skew"]},
+                             env={"TDC_MULTI_LUTS": "1"}, xfail=set()),
     "calibrated": dict(params={"LUT_FILE": f'"{SIM_LUT.as_posix()}"'}, suites=["top"],
                        tests={"top": ["test_smoke", "test_boundary", "test_code_density"]},
                        env={"TDC_LUT_FILE": str(SIM_LUT), "TDC_N_DENSITY": "2000",
@@ -80,6 +91,18 @@ def ensure_sim_lut():
     import subprocess
     subprocess.run([sys.executable, str(ROOT / "scripts" / "calibrate.py"), str(codes),
                     "--out", str(SIM_LUT), "--summary", str(SIM_LUT.with_suffix(".json"))],
+                   check=True)
+
+
+def ensure_multi_luts():
+    """multi_calibrated config: one LUT per channel from the default run's data."""
+    codes = SIM_DIR / "out" / "default" / "multi_fine_codes.csv"
+    if not codes.exists():
+        raise SystemExit("multi_calibrated config: run the default config's multi suite first "
+                         "(it produces sim/out/default/multi_fine_codes.csv)")
+    import subprocess
+    subprocess.run([sys.executable, str(ROOT / "scripts" / "calibrate.py"), str(codes),
+                    "--channel-col", "0", "--code-col", "1", "--per-channel", str(MULTI_LUTS)],
                    check=True)
 
 
@@ -104,6 +127,8 @@ def run(config: str, suite: str, only_test=None, extra_params=None):
 
     if config == "calibrated":
         ensure_sim_lut()
+    if config == "multi_calibrated":
+        ensure_multi_luts()
     runner = get_runner("icarus")
     runner.build(
         sources=RTL,

@@ -60,6 +60,7 @@ async def test_m1_rehearsal(dut):
     emu = m1.u_emu
     cfg = default_cfg()
     dut.sw.value = 0b0001             # p = 1e-2, no gap, no raw timestamps
+    dut.uart_txd_in.value = 1         # command line idle (the FT2232H drives it high)
     dut.ck_rst.value = 0              # CPU_RESET pressed
     await Timer(300, unit="ns")       # MMCM stand-in locks at 100 ns
     clk = m1.clk

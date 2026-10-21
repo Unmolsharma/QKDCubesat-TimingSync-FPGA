@@ -14,6 +14,9 @@ satellite-to-ground BB84 QKD (modelled on the Jinan-1 architecture):
   the M1 board top, simulated end to end. See
   [M1 rehearsal](#m1-rehearsal-in-simulation-satellite-emulator--board-top) and
   [docs/M1_DEMO.md](docs/M1_DEMO.md).
+* **Multi-channel TDC** (tag `v0.4-multich-sim`): 5 channels (4 quantum + 1 sync) on one
+  time base, merged into one time-ordered stream, with per-channel calibration. See
+  [Multi-channel TDC](#multi-channel-tdc-phase-3).
 
 Optical-link framing, two-way time transfer and the control FSM are later blocks.
 
@@ -599,6 +602,112 @@ so the integral gain is temporarily smaller; re-lock still took less time
 than the first lock. Capping one interval's contribution would remove the
 effect (a candidate tweak, not needed for M1).
 
+---
+
+# Multi-channel TDC (phase 3)
+
+> SIMULATED against the behavioural carry-chain model; resource numbers are
+> ESTIMATED from the RTL structure (no Vivado run).
+
+A BB84 receiver has 4 single-photon detectors (one per polarisation state)
+plus at least one timing/sync channel, all on **one time base**.
+`rtl/tdc/tdc_multi_top.v` has `NUM_CH` channels (default 5). Each is block 1's
+complete channel: its own 48-CARRY4 chain, sync stage, popcount encoder, hit
+detector, calibration LUT and an 8-deep FIFO. All share **one** coarse
+counter. A merger turns them into one stream `{ch, coarse, fine, fine_ps}`
+with valid/ready back-pressure and a drop counter per channel.
+
+```
+ hit[0] -> chain -> sync -> encoder -> hit detect -> LUT ch0 -> FIFO 0 -+
+ ...                                                                    +-> merger -> {ch, coarse, fine, fine_ps}
+ hit[4] -> chain -> sync -> encoder -> hit detect -> LUT ch4 -> FIFO 4 -+    (time-ordered, valid/ready)
+                       one tdc_coarse_counter, shared
+```
+
+**Ordering guarantee and its limits.** Every channel has the same pipeline, so
+a hit captured at edge c is in its FIFO by coarse_now = c + MAXLAT (12). A FIFO
+head is released only when coarse_now ≥ c + MAXLAT + 2, so by then every
+earlier hit on every channel is queued. Among the eligible heads the merger
+emits the smallest calibrated time `c·T − fine_ps` (lowest channel on a tie).
+The output is therefore **sorted by measured time**. Limits:
+- Two hits closer than the TDC resolution (~12–18 ps RMS) plus any
+  *uncorrected* channel skew may come out in either order.
+- The merger emits one hit per clock. Aggregate bursts above 250 M/s, or a
+  stalled consumer, fill the FIFOs. Further hits are dropped and counted per
+  channel, never overwritten. QKD count rates are orders of magnitude lower.
+- Extra latency is ~15 clocks over a single channel.
+
+`NUM_CH = 1` gives a single channel through the merger. Block 1's `tdc_top`
+and all its tests are unchanged.
+
+**Tests (`sim/tdc/test_multi.py`, suites `multi` = 5 ch and `multi1` = 1 ch):**
+
+| Test | Result (SIMULATED) |
+|---|---|
+| 150 random hits per channel, independent | 750/750 out, each matched to its real hit on the right channel, **0 ordering inversions**, no drops |
+| Consumer stalled ~1 µs while all channels fire | FIFOs fill: 14–16 hits dropped and counted per channel; 0 inversions; output + drops + dead-time rejects = all 200 hits |
+| Same as 1 channel (`NUM_CH = 1`) | 150/150, 0 inversions |
+| Per-channel code density | 10 000 calibration + 2 500 validation hits per channel → `calibrate.py --per-channel` → `ch0..ch4.mem` |
+
+**Channel-to-channel skew (the same pulse on all 5 channels at once, 400 pulses; numbers from the clean
+full run; the ideal-LUT column moves by a few ps when the test runs alone, because the model's
+jitter stream is shared per simulation):**
+
+| | ideal LUT (no calibration) | one code-density LUT per channel |
+|---|---|---|
+| fixed offset vs ch 0 | 0 … +102 ps | −39 … +29 ps |
+| per-pulse spread of (ch − ch0) | 36–50 ps RMS | **18–22 ps RMS** (≈ √2 × single-channel) |
+| offset left after an offset table (estimated on half the pulses, applied to the other half) | ≤ 5.0 ps | **≤ 2.1 ps** |
+
+What this means:
+* Each chain has its own tap delays, so **calibration must be per channel**.
+  It cuts the per-channel error from 21–38 ps to 15–18 ps RMS.
+* Code density cannot see a channel's **constant offset**: pad, routing to
+  tap 0, LUT origin. The model has no routing at all and still shows up to 39
+  ps of it from tap-0 differences. On hardware, routing adds more. **Real skew
+  must be measured in the lab** (one detector pulse split to all channel
+  inputs, or a split laser pulse) and stored as a per-channel offset table,
+  subtracted downstream. The hold-out check shows such a table removes the
+  skew to within 2 ps here.
+* With an on-chip ring-oscillator source, check that **each** channel's
+  calibration hits are uniform in phase. A source that injection-locks to
+  the system clock, or reaches only some channels, biases those channels'
+  LUTs. Calibrate every channel from its own data.
+
+**Calibration tools:** `calibrate.py` / `analyze.py` take `--channel-col`,
+`--code-col` and `--channel`. `calibrate.py --per-channel DIR` writes one
+`DIR/ch<i>.mem` per channel, the names `tdc_multi_top`'s `LUT_DIR` parameter
+reads. Single-channel files work exactly as before (verified byte-identical).
+
+**Placement (`constraints/tdc_chain_place.tcl`, `scripts/build.tcl`):**
+- Channel i goes in pblock column x0 + i, rows Y50–Y97. For 5 channels use
+  `SLICE_X12Y50:SLICE_X16Y99` (noted in the XDC).
+- The Tcl refuses a pblock whose width differs from the channel count.
+- The placement report checks every chain: contiguous, one column, FFs in the
+  CARRY4's slice, and all chains in one clock region.
+- `build.tcl` writes a chain-delay report per channel and keeps the worst in
+  the summary.
+- The X12–X16 choice is plausible (next to block 1's X12, left clock-region
+  column, and both slice types have a CARRY4). It was **not checked in
+  Vivado's device view**: confirm it there, or rely on the placement report,
+  which fails if a chain leaves the region.
+
+**Resources for NUM_CH = 5 (ESTIMATED by counting the RTL structure, not from
+synthesis):**
+
+| | per channel | shared | total (5 ch) | xc7a100t has | use |
+|---|---|---|---|---|---|
+| CARRY4 | ~108 (48 chain + encoder, counters, merger key/compare) | ~12 | **~550** | 15 850 | ~3.5 % |
+| LUT | ~560 (encoder ~230, hit detect ~90, FIFO ~25, merger key/compare ~200) | ~150 | **~3 000** | 63 400 | ~4.7 % |
+| FF | ~770 (capture 192 + sync 192 + encoder ~150 + detect ~120 + FIFO/regs ~110) | ~330 | **~4 200** | 126 800 | ~3.3 % |
+| BRAM | 1 RAMB18 (512 × 16 LUT) | – | **5 RAMB18** | 270 RAMB18 | ~1.9 % |
+
+If Vivado maps the LUT memories to LUTRAM instead of BRAM, add ~128 LUTs per
+channel. The real risk is not area but **routing congestion and timing around
+five adjacent carry columns**: each needs 384 FFs in or next to its slices,
+and the merger's 64-bit key compare across 5 channels is a long combinational
+path at 250 MHz (pipeline it if timing fails).
+
 ## Running it
 
 ### Simulation (Windows or Linux, no Vivado needed)
@@ -613,6 +722,8 @@ python sim/run_tests.py --config default --suite top --test test_boundary
 python sim/run_tests.py --block tdc           # one block's suites (tdc, nco, integration)
 python sim/run_tests.py --suite nco           # block 2 RTL, 100 MHz (nco500: 500 MHz)
 python sim/run_tests.py --suite m1            # M1 rehearsal (~7 min; emu: emulator statistics)
+python sim/run_tests.py --suite multi         # 5-channel TDC (multi1: NUM_CH = 1)
+python sim/run_tests.py --config multi_calibrated   # skew with per-channel LUTs (needs the multi run)
 python model/loop_float.py                    # block 2 sweeps + plots (~3 min, 16 cores)
 python model/loop_fixed.py                    # fixed-point model sanity run
 python model/loop_limits.py                   # jitter / dark-count / SPAD-tail limits (~30 s)
@@ -620,8 +731,9 @@ python model/loop_limits.py                   # jitter / dark-count / SPAD-tail 
 
 Configurations: `default`; `nojitter` (strict monotonicity); `fast_corner` (coverage
 tests are **expected** to fail and are reported as XFAIL); `calibrated` (the RTL loads
-the LUT that `calibrate.py` built from the default run). On Linux, `make -C sim` wraps
-the same runner.
+the LUT that `calibrate.py` built from the default run); `multi_calibrated` (the
+5-channel TDC with one LUT per channel, built by `calibrate.py --per-channel` from the
+default run's multi-channel data). On Linux, `make -C sim` wraps the same runner.
 
 ### Calibration and analysis
 
