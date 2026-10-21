@@ -31,17 +31,22 @@ Top level: `rtl/top/m1_arty_top.v`. The emulator and the TDC/NCO share
 nothing but the jumper wire, the same way the real system shares nothing but
 the optical link.
 
-### Pins (to be checked against the Arty A7 master XDC before the build)
+### Pins (checked against Digilent's `Arty-A7-100-Master.xdc`, digilent-xdc master, 2026-10-20)
 
-| Signal | Port | Arty connector | Package pin | Notes |
+| Signal | Port | Arty connector | Package pin | Bank function (master XDC) |
 |---|---|---|---|---|
-| TDC hit input | `ja[0]` | Pmod JA pin 1 | G13 | as block 1 |
-| Emulator pulse out | `emu_out` | Pmod JA pin 2 | B11 | **check** |
-| Emulator clock in | `jb[0]` | Pmod JB pin 1 | E15 | **must be a clock-capable (MRCC/SRCC) pin: check in the schematic. If it is not, move it to one that is, or add `CLOCK_DEDICATED_ROUTE FALSE` (more jitter on the emulator, harmless for M1).** |
-| Reset | `ck_rst` | CPU_RESET | C2 | as block 1 |
-| Switches | `sw[3:0]` | SW0..3 | A8 C11 C10 A10 | see below |
-| LEDs | `led[3:0]` | LD4..7 | H5 J5 T9 T10 | see below |
-| UART | `uart_rxd_out` | USB | D10 | as block 1 |
+| TDC hit input | `ja[0]` | Pmod JA pin 1 | G13 | IO_0_15 |
+| Emulator pulse out | `emu_out` | Pmod JA pin 2 | B11 | IO_L4P_T0_15 |
+| Emulator clock in | `jb[0]` | Pmod JB pin 1 | E15 | **IO_L11P_T1_SRCC_15: clock-capable** (SRCC, P side of the pair, as a single-ended clock needs), so it can drive the BUFG directly. No change needed. |
+| Board clock | `CLK100MHZ` | oscillator | E3 | IO_L12P_T1_MRCC_35 |
+| Reset | `ck_rst` | CPU_RESET | C2 | IO_L16P_T2_35 |
+| Switches | `sw[3:0]` | SW0..3 | A8 C11 C10 A10 | bank 16 |
+| LEDs | `led[3:0]` | LD4..7 | H5 J5 T9 T10 | |
+| UART FPGA → PC | `uart_rxd_out` | USB | D10 | IO_L19N_T3_VREF_16 |
+| UART PC → FPGA (commands) | `uart_txd_in` | USB | **A9** | IO_L14N_T2_SRCC_16 |
+
+(If another Pmod pin is ever needed for the generator: JB pin 3 / D15 is
+IO_L12P_T1_MRCC_15, also clock-capable.)
 
 **Jumper:** one short wire from JA pin 2 to JA pin 1. Keep it short (a few
 cm) and use the Pmod GND pins as the return path.
@@ -72,7 +77,8 @@ loop has a known offset to find. Any offset within ±100 ppm is valid.
    rejects the `create_clock`/`ALLOW_COMBINATORIAL_LOOPS` lines on an empty
    object list, comment out those lines for the M1 build. Check
    `build/reports/summary.txt`: timing met, chain placement PASS, chain delay
-   PASS.
+   PASS. Then `python scripts/nco_config.py --port COMx show` must pass its ID
+   check and print the default settings (proves the command link both ways).
 2. **Wire up:** JA1–JA2 jumper; generator → JB1 at 100.002 MHz (+20 ppm),
    3.3 V CMOS, output **off**.
 3. **Program**, press CPU_RESET. LD4 blinks. LD5 is off (no signal yet).
@@ -90,6 +96,40 @@ loop has a known offset to find. Any offset within ±100 ppm is valid.
 8. **Rate steps:** repeat steps 5–6 with sw[1:0] = 10 (1e-3) and 11 (1e-4).
    Lock takes longer at lower rates.
 9. **Offset steps (optional):** generator at −50 ppm and +100 ppm.
+
+## Changing the NCO settings at run time (no rebuild)
+
+The PC can read and set every NCO runtime setting over the same USB-UART
+(commands in on pin A9, replies in the normal telemetry stream):
+
+```
+python scripts/nco_config.py --port COMx show            # current settings + raw registers
+python scripts/nco_config.py --port COMx set gate=0.25 lock=0.05 unlock=0.07
+python scripts/nco_config.py --port COMx set mse_shift=6 tau=off kp_trk=4
+python scripts/nco_config.py --port COMx defaults        # back to reset values
+```
+
+| Setting | Meaning | Default | When to change |
+|---|---|---|---|
+| `gate` | noise-gate half-width (slot) | 0.125 | 0.25 for jitter above ~0.06 slot (e.g. 150 ps at 500 MHz) |
+| `gate_en` | gate on/off | 1 | debugging |
+| `lock` / `unlock` | e² thresholds (slot²) | 1/64 / 1/16 | 0.05 / 0.07 for high jitter or dark counts up to 1.5× signal |
+| `mse_shift`, `mse_shift_trk` | e² averaging 2^-n, acquiring / locked | 5 / 7 | 6 with heavy dark counts |
+| `tau` | hit-spacing override (`off` or L = log2 clocks) | off | known, fixed rate |
+| `kp_acq`, `kp_trk`, `gear` | gears 2^-n and ramp step 2^gear | 2, 6, 6 | `kp_trk=4` for Doppler at low rates (M2) |
+| `rej_max`, `timeout`, `slip`, `slip_unlock` | unlock rules | 16, 5, 0.125, 1 | rarely |
+
+Protocol: an 8-byte frame `A5 | 'W'/'R' | addr | data[31:0] | XOR checksum`,
+answered by a READBACK frame (register value after the command, status, sequence
+number). Register map: `rtl/top/nco_cfg_regs.v`. Values take effect from the next
+hit; CPU_RESET restores the defaults. **Changing thresholds while locked is safe;
+for large changes, write them while unlocked (e.g. with sw[2] on) to start from a
+clean acquisition.**
+Verified in simulation (`sim/nco/test_nco_cmd.py`): every setting written over
+the UART line reads back and reaches `nco_top`. The NCO's results then match
+the fixed-point model with that setting, bit for bit, and differ from the
+default-setting results. A bad checksum, a write to the read-only ID register
+and an unknown command are rejected.
 
 ## What the UART shows
 

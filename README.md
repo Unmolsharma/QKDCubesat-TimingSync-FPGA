@@ -564,8 +564,15 @@ phase histories in software) would be faster if a processor is available.
   every pulse on a side channel. `drop_all` makes a signal gap.
 * `rtl/top/m1_arty_top.v`: emulator → Pmod JA2 → jumper → JA1 → TDC → NCO →
   UART, plus switches (p, gap, raw timestamps) and LEDs (locked, unlock seen).
+* `rtl/top/uart_rx.v` + `rtl/top/nco_cfg_regs.v` + `scripts/nco_config.py`: the
+  PC sets and reads the NCO runtime settings (gate, lock/unlock thresholds,
+  averaging, τ override, gears, unlock rules) over the USB-UART (RX pin A9) with
+  8-byte framed commands; replies come back as READBACK frames. Simulated per
+  setting: readback, value on `nco_top`, results bit-exact with the model under
+  that setting and different from the defaults (`sim/nco/test_nco_cmd.py`).
 * `constraints/m1_arty_a7.xdc`, `scripts/build.tcl -tclargs top=m1_arty_top`:
-  **not yet run in Vivado; the two new pins must be checked** (M1_DEMO.md).
+  pins checked against Digilent's master XDC (E15 = SRCC clock-capable, B11 =
+  JA pin 2, A9 = UART RX). **Not yet built in Vivado.**
 
 **Emulator check (`sim/integration/test_emulator.py`):** P(select) = 0.00997 vs
 0.01, adjacent-slot pair rate 1.08e-4 vs p² = 1.0e-4, emitted fraction = p/(1+p),
