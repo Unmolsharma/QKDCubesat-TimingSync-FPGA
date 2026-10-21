@@ -14,6 +14,8 @@ FRAMES (self-synchronising: only header bytes have bit 7 set)
          | sgn 16 (signed, 2^-16 slot) | unlock 16 | abort 16 | suspect 16 | noise 16
          | late 16 | hits 16 | 2 spare
          ppm = foff * 2^8 / FPS_NOM * 1e6, FPS_NOM = round(f_src * 1e-12 * 2^56)
+         spare = 01 marks a READBACK instead (reply to a PC command, see
+         scripts/nco_config.py): addr 8 | value 32 | status 8 | seq 8 | 0... | 01
 
 OUTPUT
   --out codes.csv : one raw fine code per line (input for calibrate.py)
@@ -50,8 +52,15 @@ def fps_nom(f_src_hz):
     return ((1 << 56) * int(round(f_src_hz)) + 500_000_000_000) // 1_000_000_000_000
 
 
+def decode_readback(v):
+    return dict(kind="readback", addr=(v >> 165) & 0xFF, value=(v >> 133) & 0xFFFFFFFF,
+                status=(v >> 125) & 0xFF, seq=(v >> 117) & 0xFF)
+
+
 def decode_tlm(v, f_src_hz=100e6):
-    out, pos = {}, 173
+    if v & 0x3 == 0x1:
+        return decode_readback(v)
+    out, pos = {"kind": "telemetry"}, 173
     for name, w in TLM_FIELDS:
         pos -= w
         x = (v >> pos) & ((1 << w) - 1)
@@ -141,8 +150,10 @@ def main(argv=None):
                 if status and f["drop"] != status[-1]["drop"]:
                     print(f"  warning: {f['drop'] - status[-1]['drop']} hits dropped on board")
                 status.append(f)
-            elif ftype == T_TLM:
+            elif ftype == T_TLM and f["kind"] == "telemetry":
                 tlm.append(f)
+            elif ftype == T_TLM:
+                pass                                    # command readback (nco_config.py)
             else:
                 codes.append(f["fine"])
                 if ftype == T_TS:

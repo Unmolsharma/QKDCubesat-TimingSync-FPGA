@@ -129,6 +129,13 @@ module nco_loop_filter #(
                     end
                 end
             end
+            // Follow runtime changes of the gear settings (nco_cfg_regs): while
+            // acquiring, kp IS kp_acq; after that it never exceeds kp_trk. With
+            // constant settings both lines are no-ops.
+            if (!acquired)
+                kp <= kp_acq;
+            else if (kp > kp_trk)
+                kp <= kp_trk;
             // lock-detector decisions (never in the same cycle as an E update:
             // nco_align's POP_GAP guarantees that)
             if (to_acq) begin

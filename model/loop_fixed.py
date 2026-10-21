@@ -233,6 +233,11 @@ class FixedNCO:
         resid = rhu(e24 * cfg.t_slot_ps, E_FRAC)
         # --- stage E: gate, loop filter, averages ---
         st0 = self.state
+        # runtime gear settings (RTL: continuous): in ACQ kp = kp_acq, else <= kp_trk
+        if st0 == ACQ:
+            self.kp = cfg.kp_acq
+        elif self.kp > cfg.kp_trk:
+            self.kp = cfg.kp_trk
         noise = st0 != ACQ and cfg.gate_en and abs(e24) >= (cfg.gate_thr << 8)
         L = self.L_cur()
         kp = self.kp

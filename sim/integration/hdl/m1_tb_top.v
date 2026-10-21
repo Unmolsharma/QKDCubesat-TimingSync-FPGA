@@ -14,7 +14,8 @@ module m1_tb_top #(
     input  wire       ck_rst,
     input  wire [3:0] sw,
     output wire [3:0] led,
-    output wire       uart_rxd_out
+    output wire       uart_rxd_out,
+    input  wire       uart_txd_in
 );
     // waveform generator: f(t) = 100 MHz * (1 + (PPM + DRIFT_PPM_S * t) * 1e-6)
     reg  clk_src = 1'b0;
@@ -32,6 +33,7 @@ module m1_tb_top #(
 
     m1_arty_top #(.STATUS_PERIOD(STATUS_PERIOD), .SEED(SEED)) u_m1 (
         .CLK100MHZ(1'b0), .ck_rst(ck_rst), .sw(sw), .jb(clk_src), .ja(ja_in),
-        .emu_out(emu_out), .led(led), .uart_rxd_out(uart_rxd_out));
+        .emu_out(emu_out), .led(led), .uart_rxd_out(uart_rxd_out),
+        .uart_txd_in(uart_txd_in));
 endmodule
 `default_nettype wire

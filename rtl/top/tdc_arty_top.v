@@ -158,6 +158,8 @@ module tdc_arty_top #(
         .sat_cnt   (sat_cnt),
         .tlm_en    (1'b0),                 // no loop telemetry in the block 1 wrapper
         .tlm_data  (173'd0),
+        .rb_valid  (1'b0),                 // no command interface in the block 1 wrapper
+        .rb_data   (173'd0),
         .tx        (uart_rxd_out)
     );
 

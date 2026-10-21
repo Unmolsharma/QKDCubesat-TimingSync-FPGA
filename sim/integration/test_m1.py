@@ -173,7 +173,7 @@ async def test_m1_rehearsal(dut):
     # --- UART telemetry, decoded with the lab parser ---
     p = FrameParser()
     frames = p.feed(bytes(rx))
-    tlm = [f for t, f in frames if t == T_TLM]
+    tlm = [f for t, f in frames if t == T_TLM and f["kind"] == "telemetry"]
     st = [f for t, f in frames if t == T_STATUS]
     tlm_lock_ppm = [f["ppm"] for f in tlm if f["state_name"] == "LOCK"]
 

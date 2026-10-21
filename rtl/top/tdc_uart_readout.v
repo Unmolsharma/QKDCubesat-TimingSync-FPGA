@@ -16,6 +16,8 @@
 //   type 2  STATUS     8 bytes  54-bit field  = {6'b0, drop_cnt, short_cnt, sat_cnt}
 //   type 3  TELEMETRY 25 bytes 173-bit field  = tlm_data (block 2 loop telemetry;
 //                                               layout in scripts/capture.py)
+//           or READBACK          same frame, spare bits [1:0] = 01: reply to a
+//                                PC command (nco_cfg_regs), sent before anything else
 //
 //   Only header bytes have bit 7 set, so a receiver that loses a byte just
 //   waits for the next header. scripts/capture.py implements the parser.
@@ -58,6 +60,10 @@ module tdc_uart_readout #(
     // loop telemetry (TELEMETRY frames); tie tlm_en low if unused
     input  wire                tlm_en,
     input  wire [172:0]        tlm_data,
+    // command replies (READBACK frames, 1 deep: a reply that arrives while the
+    // previous one is still queued replaces it); tie rb_valid low if unused
+    input  wire                rb_valid,
+    input  wire [172:0]        rb_data,
     output wire                tx
 );
     localparam integer DW  = COARSE_W + FINE_W;
@@ -93,6 +99,8 @@ module tdc_uart_readout #(
     reg [31:0] st_timer = 32'd0;
     reg        status_due = 1'b1;
     reg        tlm_due = 1'b0;
+    reg        rb_due = 1'b0;
+    reg [172:0] rb_buf = 173'd0;
 
     // ---------------- framer ----------------
     localparam [1:0] F_IDLE = 2'd0, F_READ = 2'd1, F_LOAD = 2'd2, F_SEND = 2'd3;
@@ -112,7 +120,7 @@ module tdc_uart_readout #(
     wire [60:0] ts61   = rd_data;
     wire [53:0] st54   = {6'd0, drop_cnt, short_cnt, sat_cnt};
 
-    always @(*) rd_en = (fstate == F_IDLE) && !status_due && !tlm_due && !empty && !rst;
+    always @(*) rd_en = (fstate == F_IDLE) && !rb_due && !status_due && !tlm_due && !empty && !rst;
 
     always @(posedge clk) begin
         tx_start <= 1'b0;
@@ -121,7 +129,12 @@ module tdc_uart_readout #(
             st_timer   <= 32'd0;
             status_due <= 1'b1;
             tlm_due    <= 1'b0;
+            rb_due     <= 1'b0;
         end else begin
+            if (rb_valid) begin
+                rb_due <= 1'b1;
+                rb_buf <= rb_data;
+            end
             if (st_timer == STATUS_PERIOD - 1) begin
                 st_timer   <= 32'd0;
                 status_due <= 1'b1;
@@ -131,7 +144,14 @@ module tdc_uart_readout #(
 
             case (fstate)
             F_IDLE:
-                if (status_due) begin
+                if (rb_due && !rb_valid) begin
+                    rb_due <= 1'b0;
+                    sr     <= rb_buf;
+                    ftype  <= T_TLM;
+                    nleft  <= 5'd25;
+                    first  <= 1'b1;
+                    fstate <= F_SEND;
+                end else if (status_due) begin
                     status_due <= 1'b0;
                     tlm_due    <= tlm_en;
                     sr     <= {st54, {(SRW-54){1'b0}}};

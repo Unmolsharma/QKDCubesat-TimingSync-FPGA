@@ -22,6 +22,9 @@
 //   sw[3]   1 = also stream raw TDC timestamps (TIMESTAMP frames; lossy at high
 //               rates, for debugging only). Telemetry is always on.
 //   ck_rst  CPU_RESET (active low): resets the 250 MHz side and the emulator
+//           (and the NCO settings back to their defaults)
+//   uart_txd_in  PC -> FPGA commands (pin A9): set / read the NCO runtime
+//           settings without a rebuild, see nco_cfg_regs.v and scripts/nco_config.py
 //   led[0]  heartbeat (MMCM locked, clock running)
 //   led[1]  NCO LOCKED
 //   led[2]  sticky: an unlock happened (unlock_cnt != 0)
@@ -56,7 +59,8 @@ module m1_arty_top #(
     input  wire [0:0] ja,             // TDC hit in (Pmod JA pin 1)
     output wire       emu_out,        // emulator pulse out (Pmod JA pin 2)
     output wire [3:0] led,
-    output wire       uart_rxd_out
+    output wire       uart_rxd_out,
+    input  wire       uart_txd_in       // PC -> FPGA (FT2232H TXD), 2 Mbaud commands
 );
     localparam integer FINE_W = 9, COARSE_W = 48, PS_W = 16;
     localparam [127:0] FPS_X   = ((128'd1 << 56) * F_SRC_HZ + 128'd500000000000) / 128'd1000000000000;
@@ -129,7 +133,29 @@ module m1_arty_top #(
         .rej_cnt(), .coarse_now(coarse_now),
         .cal_we(1'b0), .cal_addr({FINE_W{1'b0}}), .cal_wdata({PS_W{1'b0}}));
 
-    // ---------------- NCO (block 2), default register values ----------------
+    // ---------------- PC command interface: NCO runtime settings ----------------
+    wire        rx_valid;
+    wire [7:0]  rx_data;
+    wire        rb_valid;
+    wire [172:0] rb_data;
+    wire [3:0]  c_kp_acq, c_kp_trk, c_gear, c_mse, c_mse_trk;
+    wire        c_gate_en, c_tau_en, c_slip_unlock;
+    wire [15:0] c_gate_thr, c_slip_thr;
+    wire [31:0] c_lock, c_unlock;
+    wire [7:0]  c_rej;
+    wire [4:0]  c_to, c_tau;
+    uart_rx #(.CLKS_PER_BIT(CLKS_PER_BIT)) u_rx (
+        .clk(clk), .rst(rst), .rx(uart_txd_in), .valid(rx_valid), .data(rx_data), .frame_err());
+    nco_cfg_regs u_cfg (
+        .clk(clk), .rst(rst), .rx_valid(rx_valid), .rx_data(rx_data),
+        .rb_valid(rb_valid), .rb_data(rb_data),
+        .kp_acq(c_kp_acq), .kp_trk(c_kp_trk), .gear_log2(c_gear), .gate_en(c_gate_en),
+        .gate_thr(c_gate_thr), .mse_shift(c_mse), .mse_shift_trk(c_mse_trk),
+        .lock_thr(c_lock), .unlock_thr(c_unlock), .rej_max(c_rej), .to_shift(c_to),
+        .tau_ovr_en(c_tau_en), .tau_ovr(c_tau), .slip_thr(c_slip_thr),
+        .slip_unlock(c_slip_unlock), .cmd_cnt(), .err_cnt());
+
+    // ---------------- NCO (block 2), settings from nco_cfg_regs ----------------
     wire               nco_valid, nco_locked, nco_noise;
     wire [47:0]        nco_slot;
     wire [1:0]         st;
@@ -145,11 +171,11 @@ module m1_arty_top #(
         .s_fine(m_cal[PS_W-1:0]), .s_tag(4'd0),
         .m_valid(nco_valid), .m_ready(1'b1), .m_slot(nco_slot), .m_resid_ps(),
         .m_noise(nco_noise), .m_locked(nco_locked), .m_e24(), .m_coarse(), .m_tag(),
-        .cfg_kp_acq(4'd2), .cfg_kp_trk(4'd6), .cfg_gear_log2(4'd6),
-        .cfg_gate_en(1'b1), .cfg_gate_thr(16'h2000), .cfg_mse_shift(4'd5),
-        .cfg_mse_shift_trk(4'd7), .cfg_lock_thr(32'h0400_0000), .cfg_unlock_thr(32'h1000_0000),
-        .cfg_rej_max(8'd16), .cfg_to_shift(5'd5), .cfg_tau_ovr_en(1'b0), .cfg_tau_ovr(5'd0),
-        .cfg_slip_thr(16'h2000), .cfg_slip_unlock(1'b1),
+        .cfg_kp_acq(c_kp_acq), .cfg_kp_trk(c_kp_trk), .cfg_gear_log2(c_gear),
+        .cfg_gate_en(c_gate_en), .cfg_gate_thr(c_gate_thr), .cfg_mse_shift(c_mse),
+        .cfg_mse_shift_trk(c_mse_trk), .cfg_lock_thr(c_lock), .cfg_unlock_thr(c_unlock),
+        .cfg_rej_max(c_rej), .cfg_to_shift(c_to), .cfg_tau_ovr_en(c_tau_en), .cfg_tau_ovr(c_tau),
+        .cfg_slip_thr(c_slip_thr), .cfg_slip_unlock(c_slip_unlock),
         .ext_valid(1'b0), .ext_dphase(48'sd0), .ext_dfreq(48'sd0),
         .tlm_state(st), .tlm_locked(), .tlm_kp(kp), .tlm_L(L), .tlm_fps(fps), .tlm_phase(),
         .tlm_mse(mse), .tlm_sgn(sgn), .unlock_cnt(unlock_cnt), .abort_cnt(abort_cnt),
@@ -172,7 +198,8 @@ module m1_arty_top #(
         .s_valid(tdc_valid & tdc_ready & sw3_s[1]), .s_ready(),
         .s_coarse(m_raw[FINE_W +: COARSE_W]), .s_fine(m_raw[FINE_W-1:0]),
         .mode_ts(1'b1), .drop_cnt(drop_cnt), .short_cnt(short_cnt), .sat_cnt(sat_cnt),
-        .tlm_en(1'b1), .tlm_data(tlm), .tx(uart_rxd_out));
+        .tlm_en(1'b1), .tlm_data(tlm), .rb_valid(rb_valid), .rb_data(rb_data),
+        .tx(uart_rxd_out));
 
     // ---------------- LEDs ----------------
     reg unlock_seen = 1'b0, sat_seen = 1'b0;
