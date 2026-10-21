@@ -102,10 +102,11 @@ proc tdc_arc_delay {cell from to prop} {
     return [tdc_ps [get_property $prop [lindex $arc 0]]]
 }
 
-proc tdc_report_chain_delay {rpt_file min_req_ns} {
-    # CARRY4s of the delay line, sorted by chain index g_c4[k]
+proc tdc_report_chain_delay {rpt_file min_req_ns {ch 0}} {
+    # CARRY4s of channel ch's delay line, sorted by chain index g_c4[k]
+    # (tdc_chain_cells is defined in constraints/tdc_chain_place.tcl)
     set idx {}
-    foreach c [get_cells -hier -filter {REF_NAME == CARRY4 && NAME =~ *u_dl/*}] {
+    foreach c [lindex [tdc_chain_cells $ch] 0] {
         if {![regexp {g_c4\[(\d+)\]} $c -> k]} { error "cannot parse chain index from $c" }
         lappend idx [list $k $c]
     }
@@ -114,7 +115,7 @@ proc tdc_report_chain_delay {rpt_file min_req_ns} {
     set n [llength $chain]
 
     set fh [open $rpt_file w]
-    puts $fh "TDC carry-chain delay, CYINIT of CARRY4 #0 -> CO\[3\] of CARRY4 #[expr {$n-1}]"
+    puts $fh "TDC carry-chain delay, channel $ch, CYINIT of CARRY4 #0 -> CO\[3\] of CARRY4 #[expr {$n-1}]"
     puts $fh "Static timing model (rising edge). min = fast corner, max = slow corner."
     puts $fh ""
     puts $fh [format "%-4s %-10s %-10s %-10s %-10s  %s" k "arc_min" "arc_max" "net_min" "net_max" cell]
@@ -162,8 +163,8 @@ proc tdc_report_chain_delay {rpt_file min_req_ns} {
         puts $fh $txt
     }
     close $fh
-    puts [format "TDC chain delay: min %.3f ns (fast) / max %.3f ns (slow), need > %.2f ns -> %s" \
-        $tmin $tmax $min_req_ns $verdict]
+    puts [format "TDC ch%d chain delay: min %.3f ns (fast) / max %.3f ns (slow), need > %.2f ns -> %s" \
+        $ch $tmin $tmax $min_req_ns $verdict]
     return [list $ok $tmin $tmax]
 }
 
@@ -178,8 +179,18 @@ report_methodology            -file [file join $RPT methodology.rpt]
 report_cdc                    -file [file join $RPT cdc.rpt]
 
 set chain_ok [tdc_check_chain_placement [file join $RPT chain_placement.rpt]]
-lassign [tdc_report_chain_delay [file join $RPT chain_delay.rpt] $CHAIN_MIN_NS] \
-    delay_ok delay_min delay_max
+# One report per channel (chain_delay.rpt = channel 0, chain_delay_ch<i>.rpt
+# for the others in a multi-channel build); the summary keeps the worst one.
+set delay_ok 1
+set delay_min 1e9
+set delay_max 0.0
+for {set ch 0} {$ch < [tdc_num_channels]} {incr ch} {
+    set f [expr {$ch == 0 ? "chain_delay.rpt" : "chain_delay_ch$ch.rpt"}]
+    lassign [tdc_report_chain_delay [file join $RPT $f] $CHAIN_MIN_NS $ch] ok_c min_c max_c
+    set delay_ok  [expr {$delay_ok && $ok_c}]
+    set delay_min [expr {min($delay_min, $min_c)}]
+    set delay_max [expr {max($delay_max, $max_c)}]
+}
 
 # WNS on the system clock -> Fmax estimate. Fmax = 1 / (T - WNS) is only an
 # estimate: the design was placed and routed for 4 ns, and re-running at a

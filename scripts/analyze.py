@@ -60,7 +60,9 @@ def finish(fig, ax, path, label, title):
     plt.close(fig)
 
 
-def load_validation(path):
+def load_validation(path, code_col=0, channel_col=None, channel=None):
+    """fine,tau_true_ps lines (code in code_col, tau in the next column);
+    with channel_col/channel only that channel's lines."""
     rows = []
     with open(path) as f:
         for line in f:
@@ -68,7 +70,9 @@ def load_validation(path):
             if not line or line.startswith("#"):
                 continue
             c = line.split(",")
-            rows.append((int(c[0]), float(c[1])))
+            if channel_col is not None and channel is not None and int(c[channel_col]) != channel:
+                continue
+            rows.append((int(c[code_col]), float(c[code_col + 1])))
     a = np.asarray(rows)
     return a[:, 0].astype(int), a[:, 1]
 
@@ -95,13 +99,18 @@ def main(argv=None):
                     help="LSB of the uncalibrated (ideal linear) LUT")
     ap.add_argument("--label", default="SIMULATED")
     ap.add_argument("--outdir", default="build/analysis")
+    ap.add_argument("--code-col", type=int, default=0,
+                    help="column of the fine code (validation: tau is the next column)")
+    ap.add_argument("--channel-col", type=int, help="multi-channel files: channel column")
+    ap.add_argument("--channel", type=int, help="analyse this channel only")
     args = ap.parse_args(argv)
 
     style()
     out = Path(args.outdir)
     out.mkdir(parents=True, exist_ok=True)
     depth = 1 << args.fine_w
-    r = code_density(load_codes(args.codes), args.period_ps, depth)
+    r = code_density(load_codes(args.codes, args.code_col, args.channel_col, args.channel),
+                     args.period_ps, depth)
     k = np.arange(depth)
     rng = slice(r["kmin"], r["kmax"] + 1)
     kr = k[rng]
@@ -155,7 +164,7 @@ def main(argv=None):
 
     # 4/5. validation: errors before/after calibration, residual INL
     if args.validation:
-        fine, tau = load_validation(args.validation)
+        fine, tau = load_validation(args.validation, args.code_col, args.channel_col, args.channel)
         e_raw = lut_raw[fine] - tau
         e_cal = lut_cal[fine] - tau
         e_raw -= e_raw.mean()           # constant channel offset is not resolution

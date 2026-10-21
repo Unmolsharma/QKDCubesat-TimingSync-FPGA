@@ -22,6 +22,17 @@ INPUT FORMAT (same for simulation and hardware)
   columns, only the first is used, so validation.csv and board dumps with
   extra columns work unchanged. scripts/capture.py writes this format.
 
+  MULTI-CHANNEL (rtl/tdc/tdc_multi_top.v): every chain has its own tap delays
+  and needs its OWN LUT. Give the column holding the channel number and the
+  column holding the code, e.g. for "ch,fine" lines:
+      --channel-col 0 --code-col 1 --channel 2      one channel -> --out
+      --channel-col 0 --code-col 1 --per-channel DIR
+                                                    every channel -> DIR/ch<i>.mem
+  (the names tdc_multi_top's LUT_DIR parameter expects). With a ring-oscillator
+  or other on-chip source, check that each channel really sees hits that are
+  uniform in phase: a source injection-locked to the system clock, or routed
+  so that it reaches one channel only, gives that channel a biased LUT.
+
 OUTPUT
   calib_lut.mem : 2^FINE_W lines, one hex word per line (PS_W bits), for
                   $readmemh in rtl/tdc/tdc_calib_lut.v. Codes below the used range
@@ -42,18 +53,32 @@ from pathlib import Path
 import numpy as np
 
 
-def load_codes(path):
-    """Read raw fine codes (first column of each non-comment line)."""
-    codes = []
+def load_columns(path):
+    """All non-comment lines of a CSV/text file, split on commas."""
+    rows = []
     with open(path) as f:
         for line in f:
             line = line.strip()
-            if not line or line.startswith("#"):
-                continue
-            codes.append(int(line.split(",")[0]))
+            if line and not line.startswith("#"):
+                rows.append(line.split(","))
+    return rows
+
+
+def load_codes(path, code_col=0, channel_col=None, channel=None):
+    """Raw fine codes from column code_col (default: the first). With
+    channel_col and channel, only the lines of that channel."""
+    codes = []
+    for c in load_columns(path):
+        if channel_col is not None and channel is not None and int(c[channel_col]) != channel:
+            continue
+        codes.append(int(c[code_col]))
     if not codes:
-        raise ValueError(f"{path}: no codes found")
+        raise ValueError(f"{path}: no codes found" + (f" for channel {channel}" if channel is not None else ""))
     return np.asarray(codes, dtype=np.int64)
+
+
+def channels_in(path, channel_col):
+    return sorted({int(c[channel_col]) for c in load_columns(path)})
 
 
 def read_mem(path):
@@ -126,24 +151,42 @@ def main(argv=None):
     ap.add_argument("--ps-w", type=int, default=16, help="LUT word width (bits)")
     ap.add_argument("--out", default="calib_lut.mem", help="output .mem file")
     ap.add_argument("--summary", help="optional JSON summary output")
+    ap.add_argument("--code-col", type=int, default=0, help="column holding the fine code")
+    ap.add_argument("--channel-col", type=int, help="column holding the channel number")
+    ap.add_argument("--channel", type=int, help="calibrate only this channel")
+    ap.add_argument("--per-channel", metavar="DIR",
+                    help="one LUT per channel: DIR/ch<i>.mem (+ DIR/ch<i>.json)")
     args = ap.parse_args(argv)
+    if args.per_channel:
+        if args.channel_col is None:
+            sys.exit("--per-channel needs --channel-col")
+        out = Path(args.per_channel)
+        out.mkdir(parents=True, exist_ok=True)
+        for ch in channels_in(args.codes, args.channel_col):
+            print(f"--- channel {ch}")
+            main([args.codes, "--period-ps", str(args.period_ps), "--fine-w", str(args.fine_w),
+                  "--ps-w", str(args.ps_w), "--code-col", str(args.code_col),
+                  "--channel-col", str(args.channel_col), "--channel", str(ch),
+                  "--out", str(out / f"ch{ch}.mem"), "--summary", str(out / f"ch{ch}.json")])
+        return
 
     depth = 1 << args.fine_w
-    codes = load_codes(args.codes)
+    codes = load_codes(args.codes, args.code_col, args.channel_col, args.channel)
     if codes.max() >= depth or codes.min() < 0:
         sys.exit(f"code out of range 0..{depth - 1}: min {codes.min()} max {codes.max()}")
     r = code_density(codes, args.period_ps, depth)
 
     lut = np.clip(np.rint(r["lut_ps"]), 0, (1 << args.ps_w) - 1).astype(int)
     write_mem(args.out, lut, args.ps_w, header=[
-        f"TDC calibration LUT: fine code -> bin centre (ps), from {Path(args.codes).name}",
+        f"TDC calibration LUT: fine code -> bin centre (ps), from {Path(args.codes).name}"
+        + (f", channel {args.channel}" if args.channel is not None else ""),
         f"hits={r['total']} codes {r['kmin']}..{r['kmax']} T_clk={args.period_ps:g} ps "
         f"LSB={r['lsb_ps']:.3f} ps",
     ])
 
     rng = slice(r["kmin"], r["kmax"] + 1)
     summary = dict(
-        source=str(args.codes), hits=r["total"], period_ps=args.period_ps,
+        source=str(args.codes), channel=args.channel, hits=r["total"], period_ps=args.period_ps,
         code_min=r["kmin"], code_max=r["kmax"], n_codes=r["n_codes"],
         lsb_mean_ps=r["lsb_ps"], width_max_ps=r["width_max_ps"],
         width_min_ps=r["width_min_ps"], missing_codes=r["missing_codes"],

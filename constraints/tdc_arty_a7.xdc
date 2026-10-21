@@ -65,6 +65,16 @@ set_property ASYNC_REG  TRUE [get_cells -hier -filter {NAME =~ *u_sync/q_r_reg*}
 ## clock-region spine, with no skew step halfway up the chain.
 ## To move the chain, edit ONLY this range: tdc_chain_place.tcl derives every
 ## LOC from it, and build.tcl checks the result (build/reports/chain_placement.rpt).
+## MULTI-CHANNEL (tdc_multi_top, phase 3): one slice column PER CHANNEL, same
+## rows. For NUM_CH = 5 use  SLICE_X12Y50:SLICE_X16Y99  (channel i -> X12+i).
+## tdc_chain_place.tcl refuses a pblock whose width differs from the channel
+## count, and the placement report fails if any chain leaves the clock region.
+## Column choice: X12-X16 sit next to block 1's proven X12, in the left
+## clock-region column (X0Y1 for Y50-99). Both SLICEL and SLICEM have a
+## CARRY4, so adjacent slice columns are all usable; a BRAM/DSP column between
+## two of them would not matter (each chain is vertical). The exact slice
+## range of clock region X0Y1 on the xc7a100t was NOT checked in Vivado's
+## device view here: confirm it there, or rely on chain_placement.rpt.
 create_pblock pb_tdc_chain
 add_cells_to_pblock pb_tdc_chain [get_cells -hier -filter {(REF_NAME == CARRY4 || REF_NAME == FDRE) && NAME =~ *u_dl/*}]
 resize_pblock pb_tdc_chain -add {SLICE_X12Y50:SLICE_X12Y99}
