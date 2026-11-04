@@ -18,6 +18,10 @@ satellite-to-ground BB84 QKD (modelled on the Jinan-1 architecture):
   time base, merged into one time-ordered stream, with per-channel calibration. See
   [Multi-channel TDC](#multi-channel-tdc-phase-3).
 
+Besides the Vivado build there is a **preliminary** open-source build (Yosys +
+nextpnr-xilinx) for both board tops: [docs/OPEN_BUILD.md](docs/OPEN_BUILD.md). Its
+results are not Vivado or hardware results and do not appear in the tables here.
+
 Optical-link framing, two-way time transfer and the control FSM are later blocks.
 
 > **About the numbers.** Every figure in this README comes from **simulation**
@@ -752,7 +756,8 @@ used. `validation.csv` is `fine,tau_true_ps[,...]`.
 ### Hardware
 
 See [docs/LAB_BUILD.md](docs/LAB_BUILD.md) for build, programming, capture and
-calibration on the lab machine.
+calibration on the lab machine. To try the design without Vivado, see
+[docs/OPEN_BUILD.md](docs/OPEN_BUILD.md) (preliminary).
 
 ## Repo layout
 
@@ -766,7 +771,9 @@ sim/nco/          block 2 cocotb tests
 sim/integration/  TDC -> NCO end-to-end tests
 model/            Python reference models (float + bit-exact fixed point)
 constraints/      XDC (clocks, pins, pblock, false paths) + chain placement Tcl
-scripts/          build.tcl, calibrate.py, analyze.py, capture.py
-docs/             LAB_BUILD.md, plots
-build/            Vivado output (gitignored)
+scripts/          build.tcl, calibrate.py, analyze.py, capture.py,
+                  open_build.sh + open_flow.py (preliminary open-source build)
+docker/           pinned toolchain image for the open-source build
+docs/             LAB_BUILD.md, OPEN_BUILD.md, plots
+build/            Vivado output, build/open/ for the open-source build (gitignored)
 ```
