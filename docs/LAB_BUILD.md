@@ -1,7 +1,7 @@
 # Lab build and hardware measurement
 
 This covers the full hardware loop on the lab machine: build, program, capture,
-calibrate, rebuild with the LUT, and measure. Vivado is only needed for steps 1-3.
+calibrate, and measure. Vivado is only needed for steps 1-3.
 Steps 4 onward work on any machine with Python and the board's USB connection.
 
 **Nothing here has been run yet.** The build script and constraints were written
@@ -117,15 +117,23 @@ Things to look at:
   bins at CARRY4 or slice boundaries, and some near-zero bins.
 - Note the widest and narrowest bin, raw DNL and raw INL for the README.
 
-## 6. Rebuild with the calibration LUT
+## 6. Apply the calibration
+
+**`tdc_arty_top` calibrates offline.** It streams raw codes (`m_raw`) over the UART and
+leaves the LUT's output `m_cal` unconnected, so `calibrate.py` and `analyze.py` apply the
+table to the captured codes on the PC. No rebuild is needed, and building it with `lut=`
+changes nothing you can observe.
+
+**`lut=` only matters for `m1_arty_top`,** where `m_cal` feeds the NCO:
 
 ```sh
-vivado -mode batch -source scripts/build.tcl -tclargs lut=calib/calib_lut.mem
+vivado -mode batch -source scripts/build.tcl -tclargs top=m1_arty_top lut=calib/calib_lut.mem
 ```
 
-Only the BRAM contents change. Placement is locked, so the chain is
-unchanged. (Later, block 4 can write the LUT at run time through `cal_we/cal_addr/cal_wdata`
-without rebuilding.)
+The chain placement is locked, so the chain itself is unchanged. The table must come from
+code-density data captured on the same bitstream family: routing into the chain differs
+between builds of different tops. (Later, block 4 can write the LUT at run time through
+`cal_we/cal_addr/cal_wdata` without rebuilding.)
 
 ## 7. Measure resolution on hardware (the headline number)
 

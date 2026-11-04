@@ -54,7 +54,7 @@ module nco_core #(
     // state
     output reg         [87:0] phase = 88'd0,
     output reg  signed [47:0] fps   = FPS_NOM,
-    output reg  signed [43:0] fclk  = 44'd0
+    output reg  signed [43:0] fclk
 );
     // fps * 4000 >>> 16; Vivado maps a constant multiply to shift-and-add.
     wire signed [63:0] fps_x4000 = $signed({{16{fps[47]}}, fps}) * $signed(64'd4000);
@@ -67,7 +67,7 @@ module nco_core #(
     wire signed [47:0] df_l = loop_valid ? loop_df   : 48'sd0;
     wire signed [47:0] df_e = ext_valid  ? ext_dfreq : 48'sd0;
 
-    initial fclk = fclk_nom;
+    initial fclk = fclk_nom;            // the only initial value: Yosys rejects a second one
 
     always @(posedge clk) begin
         if (rst) begin
