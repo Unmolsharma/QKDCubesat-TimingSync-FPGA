@@ -26,11 +26,19 @@ operand fps >> 22, and P -> 24 fraction bits before the slot decision
 TIMING (cycle n = the value of the NCO time counter t_nco, which runs D
 clocks behind the TDC coarse counter so every hit arrives before the NCO
 reaches it). Sized for 250 MHz: no carry chain wider than ~24 bits in a cycle.
-  a  hit written into the align FIFO at the edge that ends cycle a
-  n  hit popped: n = max(c, a + ALIGN_LAT, n_prev + POP_GAP); j = n - c.
-     j > J_MAX -> LATE (dropped and counted, no output). Otherwise the hit
-     sees P[n], fps[n] and uses fine' = fine_ps + j * T_CLK_PS, which is
-     exact: t_hit = c*T - fine = n*T - (fine + j*T).
+  a  hit presented to nco_align (s_valid && s_ready) in cycle a
+  n  hit popped: n = max(c, a + ALIGN_LAT, n_prev + POP_GAP); j = n - c, n_prev
+     being the previous ADMITTED hit (class Admission). Admission, decided before
+     the FIFO:
+       j <= J_LOOP                         normal hit
+       J_LOOP < j <= J_MAX and c - c_loop <= W_STALE   STALE: output, loop ignores it
+       otherwise                           LATE: dropped and counted, no output,
+                                           takes no release slot
+     (c_loop: coarse time of the last LOOP hit). Stale is for coincidences: all 5
+     channels in one slot go out at j = 0, 8, 16, 24, 32. Under sustained overload
+     it lapses, so the queue drains back to fresh hits.
+     An admitted hit sees P[n], fps[n] and uses fine' = fine_ps + j * T_CLK_PS,
+     which is exact: t_hit = c*T - fine = n*T - (fine + j*T).
   n+E_LAT = E stage (gate, loop filter sample kp and L, reject run)
   n+F_LAT = F stage (state machine, counters, output)
   n+DF_LAT  frequency correction visible: fps[n+DF_LAT] includes df
@@ -59,12 +67,46 @@ E_FRAC = 24
 MSE_INIT = (1 << 32) // 12               # 1/12: what random phase gives
 ACQ, RAMP, LOCK = 0, 1, 2
 # Pipeline latencies in cycles (see TIMING above and rtl/nco/nco_top.v)
-ALIGN_LAT = 6            # FIFO write -> earliest pop
+ALIGN_LAT = 9            # nco_align input -> earliest pop (3 admission stages + 6)
 E_LAT, F_LAT = 7, 13     # pop -> E stage, pop -> F stage
 DP_LAT, DF_LAT = 18, 15  # pop -> correction visible in P, in fps
 EXT_DP_LAT, EXT_DF_LAT = 7, 4
 FCLK_LAT = 7             # fps -> fclk
 TO_LAT = 3               # no-hit timeout check
+
+
+LOOP, STALE, LATE = "loop", "stale", "late"
+
+
+class Admission:
+    """nco_align's admission and release rule (see TIMING). Valid for in-spec input
+    (c no more than ~120 cycles ahead of t_nco; the RTL saturates beyond that)."""
+
+    def __init__(self, cfg):
+        self.cfg = cfg
+        self.n_prev = None                 # release cycle of the previous admitted hit
+        self.c_loop = None                 # coarse time of the previous LOOP hit
+
+    def release(self, c, a):
+        n = max(c, a + ALIGN_LAT)
+        if self.n_prev is not None:
+            n = max(n, self.n_prev + self.cfg.POP_GAP)
+        return n
+
+    def offer(self, c, a):
+        """Returns (n, kind); kind is LOOP, STALE or LATE. Updates the state."""
+        cfg = self.cfg
+        n = self.release(c, a)
+        j = n - c
+        if j <= cfg.J_LOOP:
+            kind = LOOP
+            self.c_loop = c
+        elif j <= cfg.J_MAX and self.c_loop is not None and c - self.c_loop <= cfg.W_STALE:
+            kind = STALE
+        else:
+            return n, LATE
+        self.n_prev = n
+        return n, kind
 
 
 def rhu(x: int, s: int) -> int:
@@ -100,8 +142,10 @@ class FixedCfg:
     # build parameters
     fps_nom: int = fps_from_hz(100e6)
     t_slot_ps: int = 10000          # nominal slot period, for residual_ps only
-    D: int = 20                     # NCO time lag behind the TDC coarse counter
-    J_MAX: int = 24                 # max cycles a hit may be popped after its edge
+    D: int = 23                     # NCO time lag behind the TDC coarse counter
+    J_LOOP: int = 24                # max cycles after its edge for a hit the loop uses
+    J_MAX: int = 56                 # max cycles after its edge for a hit to be delivered
+    W_STALE: int = 48               # stale hits: within this many cycles of the last loop hit
     POP_GAP: int = 8
     tau_init_log2: int = 16
     # runtime registers (defaults = reset values)
@@ -158,7 +202,7 @@ class FixedNCO:
         self.tavg, self.tavg_valid = 0, False
         self.c_prev, self.prev_valid = 0, False
         self.c_last, self.last_valid = 0, False
-        self.n_prev_pop = None
+        self.adm = Admission(cfg)
         self.F_prev = None
         self.cnt = dict(unlock=0, suspect=0, abort=0, noise=0, late=0, hits=0)
 
@@ -219,14 +263,14 @@ class FixedNCO:
         self.mse = MSE_INIT
         self.rej = 0
 
+    def next_release(self, h: Hit):
+        return self.adm.release(h.c, h.a)
+
     def process(self, h: Hit):
         cfg = self.c
-        n = max(h.c, h.a + ALIGN_LAT)
-        if self.n_prev_pop is not None:
-            n = max(n, self.n_prev_pop + cfg.POP_GAP)
-        self.n_prev_pop = n
+        n, kind = self.adm.offer(h.c, h.a)
         j = n - h.c
-        if j > cfg.J_MAX:
+        if kind == LATE:
             self.cnt["late"] = sat(self.cnt["late"] + 1, 16)
             return dict(late=True, n=n, c=h.c, tag=h.tag)
         E = n + E_LAT
@@ -235,6 +279,7 @@ class FixedNCO:
         # --- stage A..D: phase detector ---
         P, fps = self.advance(n)
         fine2 = h.fine + j * T_CLK_PS
+        assert fine2 < 1 << 18, "fine_ps too large for J_MAX (nco_align)"
         prod = fine2 * (fps >> MUL_SHIFT)                       # 2^-34 slot
         phi = (P - (prod << (PH_FRAC - 34))) & PH_MASK
         phi24 = phi >> (PH_FRAC - E_FRAC)
@@ -244,6 +289,14 @@ class FixedNCO:
         e16 = e24 >> 8
         sq = e16 * e16
         resid = rhu(e24 * cfg.t_slot_ps, E_FRAC)
+        if kind == STALE:
+            # output only: no loop, average, counter or timeout-reference update;
+            # it does occupy the pipeline (blocks the timeout like any hit)
+            noise = self.state != ACQ and cfg.gate_en and abs(e24) >= (cfg.gate_thr << 8)
+            self.F_last = n + F_LAT
+            return dict(late=False, stale=True, n=n, c=h.c, j=j, tag=h.tag, slot=slot, e24=e24,
+                        resid=resid, noise=bool(noise), locked=self.state == LOCK, state=self.state,
+                        kp=self.kp, mse=self.mse, sgn=self.sgn)
         # --- stage E: gate, loop filter, averages ---
         st0 = self.state
         # runtime gear settings (RTL: continuous): in ACQ kp = kp_acq, else <= kp_trk
@@ -306,7 +359,7 @@ class FixedNCO:
                 self.slip_armed = True
         self.c_last, self.last_valid, self.F_last = h.c, True, n + F_LAT
         self.cnt["hits"] = sat(self.cnt["hits"] + 1, 16)
-        return dict(late=False, n=n, c=h.c, j=j, tag=h.tag, slot=slot, e24=e24, resid=resid,
+        return dict(late=False, stale=False, n=n, c=h.c, j=j, tag=h.tag, slot=slot, e24=e24, resid=resid,
                     noise=bool(noise), locked=self.state == LOCK, state=self.state, kp=self.kp,
                     mse=self.mse, sgn=self.sgn)
 
@@ -329,7 +382,7 @@ def run_hits(cfg: FixedCfg, n0, P0, hits, ext=()):
     out = []
     for h in hits:
         # corrections issued before this hit's pop cycle are registered first
-        n_est = max(h.c, h.a + ALIGN_LAT, (m.n_prev_pop + cfg.POP_GAP) if m.n_prev_pop is not None else 0)
+        n_est = m.next_release(h)
         while ext and ext[0][0] < n_est:
             m.ext_correction(*ext.pop(0))
         out.append(m.process(h))

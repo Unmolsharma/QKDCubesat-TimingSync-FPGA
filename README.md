@@ -321,7 +321,7 @@ RTL must equal it **bit for bit on every hit**, and in every test it does.
 ### Time convention end to end
 
 `t_hit = coarse·T_clk − fine_ps`, exactly as block 1. The NCO's time axis
-t_nco runs 20 clocks behind the TDC coarse counter. The phase detector
+t_nco runs D = 23 clocks behind the TDC coarse counter. The phase detector
 interpolates `φ(t_hit) = phase[c] − fine_ps·f`. `sim/integration/test_tdc_nco.py`
 drives real pulses through the behavioural TDC into the NCO and checks every
 slot against the source. A wrong sign or a wrong edge association in the
@@ -334,8 +334,8 @@ in a cycle. For a hit popped at cycle n, the frequency correction reaches `fps` 
 n+15 and the accumulator at n+22, and the phase correction lands at n+18. Hits are
 released at least `POP_GAP` = 8 cycles apart, which keeps the per-hit arithmetic
 identical to the unpipelined loop but caps sustained throughput at 31.25 Mhit/s
-(was 125). A hit released more than `J_MAX` = 24 cycles after its edge is dropped
-and counted. At high rates the next hit can sample the NCO before the previous
+(was 125). Which hits get a release slot is decided when they arrive, before the
+align FIFO (admission, below). At high rates the next hit can sample the NCO before the previous
 correction arrives, which is real extra loop delay of up to 2 hits.
 
 Float model with and without that delay, 24 trials per point, ±100 and ±1 ppm
@@ -365,10 +365,29 @@ cycle; the rest clear from per-block registers (`clr`), one cycle after an exit 
 F, which is still no later than the next hit's E stage. The no-hit timeout is
 decided a cycle early on `t_nco + 1`, so it still acts in the same cycle as before.
 Reset reaches each block through its own register in a chain (`rtl/top/rst_tree.v`
-and the taps in `nco_top`). The loop's cycle timing is unchanged:
-`model/loop_fixed.py` needed no edit and the regression is bit-exact. Two things
-outside the loop did move. The align FIFO's `s_ready` is registered, so 14 of its 16
-entries are usable. Command writes take two more clocks.
+and the taps in `nco_top`). The loop's cycle timing is unchanged and the regression
+is bit-exact. Command writes take two more clocks.
+
+**Admission: late hits cost nothing, coincidences go out whole.** `nco_align`
+predicts each hit's release cycle n = max(c, a + 9, n_prev + 8) as it arrives, in
+three pipeline stages with 10-bit relative counters (`model/loop_fixed.py`,
+`class Admission`). With j = n − c:
+
+| j | what happens |
+|---|---|
+| ≤ `J_LOOP` = 24 | released; the loop uses it |
+| 25 … `J_MAX` = 56, within 48 clocks of the last hit the loop used | released as *stale*: slot, error, residual and output as usual, every loop strobe masked |
+| otherwise | dropped before the FIFO and counted in `late_cnt`; takes no release slot |
+
+The three admission stages are offset by raising D from 20 to 23, so the loop's
+timing is unchanged. Stale hits add no loop delay: the loop never sees a hit more
+than 24 clocks old. All five hits of a 5-channel coincidence (released at j = 0, 8,
+16, 24, 32) are delivered unless the NCO was already 3 or more hits behind. fine′ =
+fine + j·4000 now needs 18 bits, so fine_ps must be below 38 144 ps (the TDC's is
+under 11 ns); `nco_phase_det` takes the 18th bit out of its multiplier and off the
+phase while the multiply runs, so it is still one DSP and the same cycle count.
+`test_coincidences` drives 30 five-fold and 40 double clicks, some right behind
+another hit: all delivered with the right slot, bit-exact, 54 of them stale.
 
 **Five merged channels against the cap** (`model/merge_limit.py`, SIMULATED).
 4 quantum detectors plus 1 sync channel, each with its own 16.75–20 ns dead time,
@@ -380,20 +399,20 @@ late drops match the model bit for bit.
 |---|---|---|---|---|
 | 100 MHz, 100 kcps + 100 kHz sync | 0.21 M/s | 0 | 0.21 M/s | yes, 0 slips |
 | 100 MHz, 1 Mcps + 1 MHz sync | 2.1 M/s | 0 | 2.1 M/s | yes, 0 slips |
-| 500 MHz, 10 Mcps + 1 MHz sync | 12.0 M/s | 0.07 % | 11.5 M/s | yes, 0 slips |
-| 100 MHz, 20 Mcps + 1 MHz sync | 23.0 M/s | 3.1 % | 20.9 M/s | yes, 1 reported unlock, 0 slips |
-| 100 MHz, 30 Mcps + 1 MHz sync | 34.1 M/s | **85 %** | 4.5 M/s | late (hit 45 000), 0 slips |
-| 100 MHz, 50 Mcps + 10 MHz sync | 65 M/s | **≈100 %** | 0.01 M/s | never |
-| 500 MHz, p = 0.5 on every channel + 10 MHz sync | 260 M/s | **≈100 %** | 0.01 M/s | never |
-| 1 Mcps with 100 k/s 5-channel coincidences | 1.7 M/s | 6.6 % | 1.6 M/s | yes, 0 slips |
+| 500 MHz, 10 Mcps + 1 MHz sync | 12.0 M/s | 0 | 11.5 M/s | yes, 0 slips |
+| 100 MHz, 20 Mcps + 1 MHz sync | 23.0 M/s | 0.14 % | 21.6 M/s | yes, 0 slips |
+| 100 MHz, 30 Mcps + 1 MHz sync | 34.1 M/s | 5.9 % | 29.1 M/s | yes (hit 631), 0 slips |
+| 100 MHz, 50 Mcps + 10 MHz sync | 65 M/s | 44 % | 31.2 M/s | **never** |
+| 500 MHz, p = 0.5 on every channel + 10 MHz sync | 260 M/s | 65 % | 30.5 M/s | **never** |
+| 1 Mcps with 100 k/s 5-channel coincidences | 1.7 M/s | 0.04 % | 1.7 M/s | yes, 0 slips |
 
-Realistic QKD rates (kHz to a few MHz) lose nothing. A coincidence on all 5
-channels always loses its 5th hit (released 32 clocks late, past `J_MAX` = 24).
-Above the cap, throughput doesn't level off at 31 Mhit/s: it collapses, because
-a late hit still uses up a POP_GAP release slot, so the queue never catches up.
-In the model, letting a late hit release without a gap fixes that: 28.4 M/s
-delivered (8 % late) at 34 M/s offered, and exactly 31.25 M/s at any higher load,
-with 0 slips. (Not built; it is a one-line change in `nco_align` plus the model.)
+Realistic QKD rates (kHz to a few MHz) lose nothing. Above the cap the NCO keeps
+delivering about 31 Mhit/s (before admission it collapsed to about 0, because a late
+hit still used up a release slot), but under sustained overload the loop doesn't
+lock: every hit it uses is then up to 24 clocks old. Lowering `J_LOOP` to 8–16 did
+not change that and cost drops at lower rates. The 0.04 % in the coincidence row are
+bursts that met an NCO already 3 or more hits behind (6 or more hits within about 50
+clocks): a capacity limit, 8 clocks per hit.
 
 ## Block 2 results (SIMULATED)
 

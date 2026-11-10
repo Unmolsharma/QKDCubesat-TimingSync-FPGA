@@ -35,6 +35,9 @@
 //   n+13 = F     state machine, output register
 //   n+15         frequency correction visible in fps
 //   n+18         phase correction visible in phase
+// A STALE hit (released more than J_LOOP = 24 cycles late: the 5th hit of a
+// coincidence) runs through the same stages and is output, but every loop strobe
+// is masked for it, so it changes no loop state and adds no loop delay.
 // A hit's state updates are all visible by F+2 = E+8 (the registered clears of an
 // exit land last), and nco_align releases at most one hit every POP_GAP = 8 cycles, so every hit sees the state left by the
 // previous one, exactly as if the loop were not pipelined. The corrections can
@@ -53,8 +56,10 @@ module nco_top #(
     parameter [47:0]  FPS_NOM       = 48'd7205759403793,  // 100 MHz: round(f*1e-12*2^56)
     parameter integer T_SLOT_PS     = 10000,              // nominal slot, for residual_ps
     parameter integer T_CLK_PS      = 4000,
-    parameter integer D             = 20,
-    parameter integer J_MAX         = 24,
+    parameter integer D             = 23,
+    parameter integer J_LOOP        = 24,                 // loop uses hits released <= J_LOOP late
+    parameter integer J_MAX         = 56,                 // later (coincidences): delivered only
+    parameter integer W_STALE       = 48,                 // ... if within this of the last loop hit
     parameter integer POP_GAP       = 8,
     parameter integer TAG_W         = 4,
     parameter integer FIFO_AW       = 4,
@@ -154,23 +159,33 @@ module nco_top #(
     end
 
     // ---------------- align ----------------
-    wire              pop;
+    wire              pop, pop_stale;
     wire [47:0]       pop_c;
-    wire [16:0]       pop_f;
+    wire [17:0]       pop_f;
     wire [TAG_W-1:0]  pop_t;
 
     nco_align #(.COARSE_W(48), .FINE_W(16), .TAG_W(TAG_W), .AW(FIFO_AW),
-                .J_MAX(J_MAX), .POP_GAP(POP_GAP), .T_CLK_PS(T_CLK_PS)) u_align (
+                .J_LOOP(J_LOOP), .J_MAX(J_MAX), .W_STALE(W_STALE), .POP_GAP(POP_GAP), .T_CLK_PS(T_CLK_PS)) u_align (
         .clk(clk), .rst(rst_ali), .t_lead(t_lead),
         .s_valid(s_valid), .s_ready(s_ready), .s_coarse(s_coarse), .s_fine(s_fine), .s_tag(s_tag),
-        .pop(pop), .pop_coarse(pop_c), .pop_fine(pop_f), .pop_tag(pop_t),
+        .pop(pop), .pop_stale(pop_stale), .pop_coarse(pop_c), .pop_fine(pop_f), .pop_tag(pop_t),
         .late(), .late_cnt(late_cnt));
 
     // ---------------- hit position in the pipeline: st[k] = cycle n+k ----------------
+    // sk[k]: that hit is STALE (released J_LOOP < j <= J_MAX late, a coincidence):
+    // it goes through the phase detector and out, but the loop ignores it.
     reg [17:1] st = 17'd0;
-    always @(posedge clk) st <= rst_pipe ? 17'd0 : {st[16:1], pop};
-    wire e_valid = st[7];
-    wire f_valid = st[13];
+    reg [13:1] sk = 13'd0;
+    always @(posedge clk) begin
+        st <= rst_pipe ? 17'd0 : {st[16:1], pop};
+        sk <= {sk[12:1], pop && pop_stale};
+    end
+    wire e_out    = st[7];                // every hit: fields for the output
+    wire f_valid  = st[13];
+    wire e_valid  = st[7]  && !sk[7];     // loop updates: fresh hits only
+    wire l_commit = st[11] && !sk[11];
+    wire l_clast  = st[12] && !sk[12];
+    wire l_f      = st[13] && !sk[13];
     // no timeout decision from a hit's E stage (n+7) until F + 3 (n+16); nco_lock_det
     // uses this two cycles before the decision
     reg  busy_e = 1'b0;
@@ -228,7 +243,7 @@ module nco_top #(
     reg [TAG_W-1:0] e_tag = {TAG_W{1'b0}};
     reg             f_noise = 1'b0;
     always @(posedge clk)
-        if (e_valid) begin
+        if (e_out) begin
             e_c     <= a_c;
             e_tag   <= a_tag;
             f_noise <= noise;
@@ -240,8 +255,8 @@ module nco_top #(
         .lock_thr(cfg_lock_thr), .unlock_thr(cfg_unlock_thr), .rej_max(cfg_rej_max),
         .to_shift(cfg_to_shift), .slip_thr(cfg_slip_thr), .slip_unlock(cfg_slip_unlock),
         .e_valid(e_valid), .e24(e_h), .sq(sq), .noise(noise),
-        .st_commit(st[11]), .busy_e(busy_e), .st_clast(st[12]), .coarse(e_c),
-        .f_valid(f_valid), .gear_done(gear_done), .L(L),
+        .st_commit(l_commit), .busy_e(busy_e), .st_clast(l_clast), .coarse(e_c),
+        .f_valid(l_f), .gear_done(gear_done), .L(L),
         .clr_next(clr_next), .enter_ramp(enter_ramp), .locked_next(locked_next),
         .state(state), .mse(tlm_mse), .sgn(tlm_sgn),
         .unlock_cnt(unlock_cnt), .abort_cnt(abort_cnt), .suspect_cnt(suspect_cnt),

@@ -355,10 +355,10 @@ class DelayedLoop(FloatLoop):
     def _measure(self, t):
         c = math.ceil(t / T_CLK_PS)
         n = c if self.n_prev is None else max(c, self.n_prev + self.c.pop_gap)
-        self.n_prev = n
         if self.c.j_max is not None and n - c > self.c.j_max:
-            self.late_cnt += 1
+            self.late_cnt += 1             # dropped without starting a pop gap
             return None
+        self.n_prev = n
         self.n_pop = n
         edge = n * T_CLK_PS
         self._apply_until(edge)

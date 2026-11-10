@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """Five merged TDC channels against the NCO's hit-rate limit. SIMULATED.
 
-The NCO releases at most one hit per POP_GAP = 8 clocks (31.25 Mhit/s) and drops a
-hit released more than J_MAX = 24 clocks after its own edge. So it can only ever
-be three hits behind. This script finds out what that costs for the receiver's
+The NCO releases at most one hit per POP_GAP = 8 clocks (31.25 Mhit/s). A hit that
+would be released more than J_LOOP = 24 clocks after its own edge is dropped before
+the FIFO (it costs no release slot), unless it comes within 48 clocks of the last
+hit the loop used (a coincidence or a short burst): then it is delivered up to
+J_MAX = 56 clocks late, without updating the loop (model/loop_fixed.py, class Admission). This script finds out what that costs for the receiver's
 merged stream: 4 quantum channels plus 1 sync channel on one time base
 (rtl/tdc/tdc_multi_top.v).
 
@@ -12,7 +14,7 @@ Path of every hit, in 250 MHz clocks:
   -> channel FIFO, 8 deep, written at c + CH_LAT (full: drop, counted in ch_drop)
   -> merger: head eligible once coarse_now >= c + MAXLAT + 2, smallest calibrated
      time first, one hit per clock, 1-deep output register, stalls on NCO full
-  -> NCO FIFO, 16 deep -> released by the rule in model/loop_fixed.py.
+  -> NCO admission, then FIFO -> released by the rule in model/loop_fixed.py.
 Everything from the NCO FIFO on is model/loop_fixed.py itself, so lock and slips
 are the fixed-point loop's. The merger part is a behavioural model of tdc_multi_top;
 sim/nco/test_nco.py::test_five_channel_merge replays these streams into the RTL.
@@ -108,7 +110,7 @@ def make_channels(sc: Scenario, seed=1):
     return t[o], ch[o], slot[o], offered - int(keep.sum()), duration
 
 
-def merge(c, fine, ch, slot, D, pop_gap, n_ch=NUM_QUANTUM + 1):
+def merge(c, fine, ch, slot, cfg, n_ch=NUM_QUANTUM + 1):
     """Cycle-by-cycle: channel FIFOs, merger, NCO FIFO occupancy.
     Returns [lfx.Hit], true slots, per-channel drop counts, peak NCO FIFO level."""
     cq = [deque() for _ in range(n_ch)]
@@ -118,7 +120,8 @@ def merge(c, fine, ch, slot, D, pop_gap, n_ch=NUM_QUANTUM + 1):
     out = None                  # merger's 1-deep output register
     i, N = 0, len(c)
     t = int(c[0] + CH_LAT)
-    n_prev = None
+    D = cfg.D
+    adm = lfx.Admission(cfg)
     peak = 0
     t0 = int(c[0]) - 1000
     while i < N or out is not None or any(cq):
@@ -128,11 +131,9 @@ def merge(c, fine, ch, slot, D, pop_gap, n_ch=NUM_QUANTUM + 1):
         if out is not None and len(fifo) < NCO_DEPTH:
             cc, ff, chn, sl = out
             a = t - 1 - D       # t_nco in this cycle (nco_top: t_nco[x] = time_now[x-1] - D)
-            n = max(cc, a + lfx.ALIGN_LAT)
-            if n_prev is not None:
-                n = max(n, n_prev + pop_gap)
-            n_prev = n
-            fifo.append(n + D + 1)
+            n, kind = adm.offer(cc, a)
+            # an admitted hit leaves at its release; a late one after the 3 admission stages
+            fifo.append(t + 3 if kind == lfx.LATE else n + D + 1)
             peak = max(peak, len(fifo))
             hits.append(lfx.Hit(cc, ff, a, chn))
             truth.append(sl)
@@ -172,7 +173,7 @@ def evaluate(sc: Scenario, seed=1, pop_gap=None):
     cfg = lfx.FixedCfg(fps_nom=lfx.fps_from_hz(sc.f_src), t_slot_ps=round(1e12 / sc.f_src))
     if pop_gap is not None:
         cfg.POP_GAP = pop_gap
-    hits, truth, drops, peak, t0 = merge(c, fine, ch, slot, cfg.D, cfg.POP_GAP)
+    hits, truth, drops, peak, t0 = merge(c, fine, ch, slot, cfg)
     outs, m = lfx.run_hits(cfg, t0, 0, hits)
     delivered = sum(not o["late"] for o in outs)
     # slips: the slot offset must not change inside a run of consecutive locked outputs

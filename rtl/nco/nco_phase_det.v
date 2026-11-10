@@ -48,7 +48,7 @@ module nco_phase_det #(
     input  wire                 clk,
     input  wire                 pop,
     input  wire [COARSE_W-1:0]  pop_coarse,
-    input  wire [16:0]          pop_fine,
+    input  wire [17:0]          pop_fine,      // fine' < 2^18 (nco_align)
     input  wire [TAG_W-1:0]     pop_tag,
     input  wire [87:0]          phase,
     input  wire signed [47:0]   fps,
@@ -71,15 +71,31 @@ module nco_phase_det #(
     // ---- n+1 ----
     reg [87:0]        a_phi = 88'd0;
     reg signed [24:0] a_m = 25'sd0;          // fps >>> 22: 2^-34 slot/ps
-    reg signed [17:0] a_fine = 18'sd0;       // always non-negative
+    reg signed [17:0] a_fine = 18'sd0;       // fine'[16:0], always non-negative
+    reg               a_b17 = 1'b0;          // fine'[17]
     always @(posedge clk)
         if (pop) begin
             a_phi  <= phase;
             a_m    <= fps[46:22];
-            a_fine <= {1'b0, pop_fine};
+            a_fine <= {1'b0, pop_fine[16:0]};
+            a_b17  <= pop_fine[17];
             a_c    <= pop_coarse;
             a_tag  <= pop_tag;
         end
+
+    // ---- fine'[17] outside the multiplier (one DSP48E1 takes 18-bit signed) ----
+    // fine' * m << 6 = (fine'[16:0] * m) << 6 + fine'[17] * (m << 23), so the second
+    // term is taken off the phase while the multiply runs: ph = a_phi - b17*(m << 23),
+    // bits 87:22 in three 22-bit segments (bits 21:0 are unaffected). Ready at n+2,
+    // n+3, n+4; used at n+4, n+5, n+6.
+    wire [87:0] corr = a_b17 ? {{40{a_m[24]}}, a_m, 23'd0} : 88'd0;
+    reg  [22:0] ph1 = 23'd0, ph2 = 23'd0;
+    reg  [21:0] ph3 = 22'd0;
+    always @(posedge clk) begin
+        ph1 <= {1'b0, a_phi[43:22]} - {1'b0, corr[43:22]};
+        ph2 <= {1'b0, a_phi[65:44]} - {1'b0, corr[65:44]} - ph1[22];
+        ph3 <= a_phi[87:66] - corr[87:66] - ph2[22];
+    end
 
     // ---- n+2, n+3: one multiply ----
     reg signed [42:0] m_prod = 43'sd0, prod = 43'sd0;
@@ -94,9 +110,9 @@ module nco_phase_det #(
     reg  [21:0] s3 = 22'd0;
     always @(posedge clk) begin
         s0 <= {1'b0, a_phi[21:0]}  - {1'b0, sub[21:0]};
-        s1 <= {1'b0, a_phi[43:22]} - {1'b0, sub[43:22]} - s0[22];
-        s2 <= {1'b0, a_phi[65:44]} - {1'b0, sub[65:44]} - s1[22];
-        s3 <= a_phi[87:66] - sub[87:66] - s2[22];
+        s1 <= {1'b0, ph1[21:0]} - {1'b0, sub[43:22]} - s0[22];
+        s2 <= {1'b0, ph2[21:0]} - {1'b0, sub[65:44]} - s1[22];
+        s3 <= ph3 - sub[87:66] - s2[22];
     end
 
     // ---- e24: phi bits 39:16, read as signed ----

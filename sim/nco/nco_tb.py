@@ -98,7 +98,7 @@ class NcoTB:
             await RisingEdge(d.clk)
         d.rst.value = 0
         # let t_nco = time_now - D become non-negative before the snapshot
-        for _ in range(24):
+        for _ in range(40):
             await RisingEdge(d.clk)
         await FallingEdge(d.clk)
         self.n0 = val(d.t_nco)

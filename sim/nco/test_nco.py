@@ -19,6 +19,7 @@ import cocotb
 
 from nco_tb import F_SRC, NcoTB, default_cfg, val  # also puts model/ on sys.path
 import hitgen  # noqa: E402
+import loop_fixed as lfx  # noqa: E402
 
 T_SLOT_PS = 1e12 / F_SRC
 RESULTS = {}
@@ -175,8 +176,9 @@ async def test_gap_reacquire(dut):
 @cocotb.test()
 async def test_coincident_and_late(dut):
     """Hits with the same coarse time (as from two channels) are released POP_GAP
-    cycles apart with fine' = fine + j*T, exactly. Hits delivered more than
-    J_MAX cycles after their NCO time are dropped and counted as late."""
+    cycles apart with fine' = fine + j*T, exactly. Hits delivered so late that
+    they would be released more than J_MAX cycles after their edge are dropped
+    and counted as late."""
     from nco_tb import LAT
     tb = NcoTB(dut)
     await tb.start()
@@ -193,6 +195,79 @@ async def test_coincident_and_late(dut):
     assert m.cnt["late"] == n_late, m.cnt
     RESULTS["coincident_late"] = dict(late=m.cnt["late"], hits=len(tb.outs))
     save_results()
+
+
+@cocotb.test()
+async def test_coincidences(dut):
+    """Double and five-fold clicks (several channels in the same slot): every hit is
+    delivered with its own correct slot. Groups also come right behind another hit
+    and two in a row. Bit-exact with the model, no late hit, no slip; the hits past
+    J_LOOP go out as stale (output only, the loop ignores them)."""
+    tb = NcoTB(dut)
+    await tb.start()
+    ppm, seed = 8.0, 71
+    s = stream(ppm=ppm, p_det=P_DEF, duration_s=1.0e-3, seed=seed)
+    scfg = hitgen.StreamCfg(f_src_hz=F_SRC, ppm=ppm)
+    rng = np.random.default_rng(seed + 1)
+    k_end = int(s["slot"][s["slot"] >= 0].max())
+    t = [np.asarray(s["t_ps"])]
+    slot = [np.asarray(s["slot"])]
+    tag = [np.zeros(len(s["t_ps"]), int)]
+    groups = []                                  # (true slot, size)
+    period = 1e12 / F_SRC
+    for g, k in enumerate(np.sort(rng.choice(np.arange(int(0.4 * k_end), k_end - 100), 60, replace=False))):
+        parts = [(int(k), 5 if g % 2 == 0 else 2)]
+        if g % 6 == 2:
+            parts.append((int(k) - 1, 1))        # a lone hit one slot before: queue already busy
+        if g % 6 == 4:
+            parts.append((int(k) + int(round(25 * 4000 / period)), 2))   # a double click 25 clocks later
+        for kk, sz in parts:
+            tt = hitgen.slot_times(scfg, np.full(sz, float(kk)), s["t_off"]) + rng.normal(0.0, 100.0, sz)
+            t.append(tt)
+            slot.append(np.full(sz, kk))
+            tag.append(np.arange(sz) if sz > 1 else np.array([7]))
+            if sz > 1:
+                groups.append((kk, sz))
+    t, slot, tag = np.concatenate(t), np.concatenate(slot), np.concatenate(tag)
+    o = np.argsort(t, kind="stable")
+    t, slot, tag = t[o], slot[o], tag[o]
+    c, f = hitgen.to_timestamps(t, hitgen.T_CLK_PS)
+    await FallingEdgeNow(dut)
+    base = val(dut.time_now) + 40
+    last = None
+    from nco_tb import LAT
+    for ci, fi, si, gi in zip(c, f, slot, tag):
+        ci = int(ci) + base
+        when = ci + LAT if last is None else max(ci + LAT, last + 1)
+        await tb.drive(ci, int(fi), truth=int(si), tag=int(gi), lat=when - ci)
+        last = when
+    m = await tb.check_model("coincidences")
+    assert m.cnt["late"] == 0, m.cnt
+    tr = tb.truth_check()
+    assert tr["slips"] == 0 and tb.outs[-1]["locked"], tr
+    outs, _ = lfx.run_hits(tb.cfg, tb.n0, tb.P0, tb.hits)
+    # every member of every group delivered, locked, with slot = true slot + K
+    k_off = {(o["slot"] - tt) % (1 << 48) for o, tt in zip(tb.outs, tb.truth) if o["locked"] and tt >= 0}
+    assert len(k_off) == 1, k_off
+    by_slot = {}
+    for o, tt in zip(tb.outs, tb.truth):
+        by_slot.setdefault(tt, []).append(o)
+    for kk, sz in groups:
+        got = by_slot[kk]
+        assert len(got) >= sz and all(o["locked"] for o in got), (kk, sz, got)
+    stale = sum(o.get("stale", False) for o in outs)
+    jmax = max(o["j"] for o in outs if not o["late"])
+    dut._log.info("SIMULATED coincidences: %d groups (%d five-fold, %d double) all delivered, %d hits "
+                  "as stale, max j %d, %s", len(groups), sum(sz == 5 for _, sz in groups),
+                  sum(sz == 2 for _, sz in groups), stale, jmax, tr)
+    assert stale > 0
+    RESULTS["coincidences"] = dict(groups=len(groups), stale=stale, max_j=jmax, **tr)
+    save_results()
+
+
+async def FallingEdgeNow(dut):
+    from cocotb.triggers import FallingEdge
+    await FallingEdge(dut.clk)
 
 
 @cocotb.test()
@@ -267,17 +342,15 @@ async def test_five_channel_merge(dut):
         first = False
         t, ch, slot, dead, _ = ml.make_channels(sc, seed=3)
         c, fine = hitgen.to_timestamps(t, hitgen.T_CLK_PS)
-        hits, truth, drops, peak, _ = ml.merge(c + 2000, fine, ch, slot, tb.cfg.D, tb.cfg.POP_GAP)
+        hits, truth, drops, peak, _ = ml.merge(c + 2000, fine, ch, slot, tb.cfg)
         shift = val(dut.time_now) + 40 - hits[0].c
         for h, tr in zip(hits, truth):
             await tb.drive(h.c + shift, h.fine, truth=tr, tag=h.tag, lat=h.a + tb.cfg.D + 1 - h.c)
         m = await tb.check_model(f"five_channel_{sc.name}")
         # the merge model's release rule, on its own arrival cycles
-        expect, n_prev = 0, None
+        adm, expect = lfx.Admission(tb.cfg), 0
         for h in hits:
-            n = max(h.c, h.a + 6) if n_prev is None else max(h.c, h.a + 6, n_prev + tb.cfg.POP_GAP)
-            n_prev = n
-            expect += n - h.c > tb.cfg.J_MAX
+            expect += adm.offer(h.c, h.a)[1] == lfx.LATE
         assert m.cnt["late"] == expect, (m.cnt["late"], expect)
         res[sc.name] = dict(hits=len(hits), late=m.cnt["late"], peak_fifo=peak, ch_fifo_drop=sum(drops))
         dut._log.info("SIMULATED five channels, %s: %s", sc.name, res[sc.name])
