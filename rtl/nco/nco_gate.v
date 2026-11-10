@@ -15,18 +15,19 @@
 // register (gate_thr, 2^-16 slot): narrow it if the jitter is low and the
 // noise high, but then the loop has less margin before it starts rejecting
 // its own signal during a disturbance.
+//
+// The comparison |e| >= g itself happens a cycle earlier, in nco_phase_det.
 // =============================================================================
 `timescale 1ns/1fs
 `default_nettype none
 
 module nco_gate (
-    input  wire        acquired,     // state != ACQ
-    input  wire        gate_en,
-    input  wire [15:0] gate_thr,     // 2^-16 slot
-    input  wire [23:0] abs_e,        // |e24|, 2^-24 slot
-    output wire        noise
+    input  wire acquired,     // state != ACQ
+    input  wire gate_en,
+    input  wire outside,      // |e24| >= gate threshold
+    output wire noise
 );
-    assign noise = acquired & gate_en & (abs_e >= {gate_thr, 8'd0});
+    assign noise = acquired & gate_en & outside;
 endmodule
 
 `default_nettype wire

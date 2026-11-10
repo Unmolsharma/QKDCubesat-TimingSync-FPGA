@@ -112,12 +112,16 @@ class NcoTB:
         while True:
             await RisingEdge(d.m_valid)
             await ReadOnly()
+            fresh = True            # internal state only lines up with the output's first cycle
             while True:
                 if val(d.m_ready):
                     self.outs.append(dict(slot=val(d.m_slot), e24=sval(d.m_e24, 25),
                                           resid=sval(d.m_resid_ps, 16), noise=bool(val(d.m_noise)),
                                           locked=bool(val(d.m_locked)), tag=val(d.m_tag),
-                                          c=val(d.m_coarse)))
+                                          c=val(d.m_coarse),
+                                          mse=val(d.u_nco.tlm_mse) if fresh else None,
+                                          sgn=sval(d.u_nco.tlm_sgn, 25) if fresh else None))
+                fresh = False
                 await RisingEdge(d.clk)
                 await ReadOnly()
                 if not val(d.m_valid):
@@ -199,6 +203,8 @@ class NcoTB:
         for i, (r, o) in enumerate(zip(self.outs, mod)):
             for k in ("slot", "e24", "resid", "noise", "locked", "tag"):
                 assert r[k] == o[k], (f"hit {i}: {k} RTL {r[k]} != model {o[k]}\n RTL {r}\n model {o}")
+            for k in ("mse", "sgn"):
+                assert r[k] is None or r[k] == o[k], (f"hit {i}: {k} RTL {r[k]} != model {o[k]}\n RTL {r}\n model {o}")
         P, fps, _ = m.registers_at(N)
         assert rtl_P == P, f"NCO phase at t_nco={N}: RTL {rtl_P:#x} != model {P:#x}"
         assert rtl_fps == fps, f"NCO fps: RTL {rtl_fps} != model {fps}"

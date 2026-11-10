@@ -280,16 +280,16 @@ is wrong.
 
 ```
  TDC {coarse, fine_ps} -> nco_align -> nco_phase_det -> gate / loop filter / lock det
-   (valid/ready)           FIFO        A B C D            E (update) F (decide)
-                    t_nco = coarse_now - 16              |        |
-                                     nco_core <-- dphi, df (cycle n+6)
+   (valid/ready)           FIFO        n+1 .. n+6         E = n+7    F = n+13
+                    t_nco = coarse_now - 20              |        |
+                                     nco_core <-- df (n+15), dphi (n+18)
                                      88-bit phase, f in slots/ps, ext correction port
  per hit out: {slot[47:0], residual_ps, noise_flag, locked, e24, tag}
 ```
 
 | Module | Role |
 |---|---|
-| `nco_align` | holds each timestamp until NCO time reaches it; exact late release (`fine' = fine + j·4000`, j ≤ 12); counts late hits |
+| `nco_align` | holds each timestamp until NCO time reaches it; exact late release (`fine' = fine + j·4000`, j ≤ 24); counts late hits |
 | `nco_core` | 48-bit slot index + 40-bit fraction; frequency in slots/ps; documented valid-strobed **external correction port** (unused by default) |
 | `nco_phase_det` | NCO phase at the photon with **one** 25×17 multiply, wrap to [−0.5, 0.5), slot = round, residual in ps |
 | `nco_gate` | noise window ±g (runtime register, default 1/8 slot); at most 1 − 2g of uniform noise can be rejected |
@@ -321,11 +321,44 @@ RTL must equal it **bit for bit on every hit**, and in every test it does.
 ### Time convention end to end
 
 `t_hit = coarse·T_clk − fine_ps`, exactly as block 1. The NCO's time axis
-t_nco runs 16 clocks behind the TDC coarse counter. The phase detector
+t_nco runs 20 clocks behind the TDC coarse counter. The phase detector
 interpolates `φ(t_hit) = phase[c] − fine_ps·f`. `sim/integration/test_tdc_nco.py`
 drives real pulses through the behavioural TDC into the NCO and checks every
 slot against the source. A wrong sign or a wrong edge association in the
 convention would make that test fail; it passes.
+
+### Loop latency
+
+The loop is pipelined for 250 MHz, so no carry chain is wider than about 24 bits
+in a cycle. For a hit popped at cycle n, the frequency correction reaches `fps` at
+n+15 and the accumulator at n+22, and the phase correction lands at n+18. Hits are
+released at least `POP_GAP` = 8 cycles apart, which keeps the per-hit arithmetic
+identical to the unpipelined loop but caps sustained throughput at 31.25 Mhit/s
+(was 125). A hit released more than `J_MAX` = 24 cycles after its edge is dropped
+and counted. At high rates the next hit can sample the NCO before the previous
+correction arrives, which is real extra loop delay of up to 2 hits.
+
+Float model with and without that delay, 24 trials per point, ±100 and ±1 ppm
+(`loop_float.py --only latency`, SIMULATED): no slip, undetected slip or unlock in
+any case, including about 15 M locked hits of slip hunt. Lock success is unchanged
+at 200 ps jitter and 10 % dark counts up to p = 0.5 at 100 MHz, and at 50 ps, 10 %
+at 500 MHz. Stress corners are where it costs:
+
+| Condition | Lock within 20 000 hits, no delay | with RTL delay |
+|---|---|---|
+| 100 MHz, 500 ps, 50 % dark, p = 0.3 | 48/48 | 45/48 |
+| 100 MHz, 500 ps, 50 % dark, p = 0.1 | 48/48 | 46/48 |
+| 500 MHz, 150 ps, 50 % dark, p = 0.03 | 34/48 | 17/48 |
+| 500 MHz, 150 ps, 50 % dark, p = 0.01 | 23/48 | 13/48 |
+| 500 MHz, 150 ps, 50 % dark, p = 0.001 | 28/48 | 27/48 |
+
+Each row sums both frequency offsets. The 500 MHz stress corner was already
+marginal without the delay. Twice the RTL delay degrades the 100 MHz stress corner
+badly (8/48 at p = 0.3), so there is little margin for more pipelining at those rates.
+
+The throughput cap costs little at a single channel's rates: at p = 0.5 and
+100 MHz (23.7 M accepted hits/s) 130 of about 273 000 hits (0.05 %) were dropped. Five merged
+channels at high rates could exceed the cap; that case has not been simulated.
 
 ## Block 2 results (SIMULATED)
 
@@ -518,9 +551,9 @@ phase histories in software) would be faster if a processor is available.
    Plus: a suspected slip forces an unlock (register `slip_unlock`, default 1),
    and the slip detector looks at all hits, not just gate-passed ones.
 3. **nco_align** releases a hit when NCO time ≥ its coarse time (not only ==),
-   rewriting fine exactly for up to 12 cycles late. Needed for coincident hits
-   from several channels; at most one release per 2 clocks so every hit's
-   control logic sees the previous hit's decisions.
+   rewriting fine exactly for up to 24 cycles late. Needed for coincident hits
+   from several channels; at most one release per 8 clocks so every hit's
+   control logic sees the previous hit's decisions (see "Loop latency").
 4. **Frequency stored in slots/ps** (not slots/clock) so phase interpolation is
    one multiply; the per-clock increment is a constant ×4000 (shift-and-add).
 5. **TDC coarse counter widened to 48 bits** (13 days wrap); UART TIMESTAMP
@@ -532,11 +565,10 @@ phase histories in software) would be faster if a processor is available.
 
 ### Open risks (block 2)
 
-* **Timing closure at 250 MHz is unverified** (no Vivado here). Most at risk: the
-  88-bit 4-input phase adder in `nco_core`, the E stage (barrel shift + e²
-  average update), the 48-bit compare + `j·4000` in `nco_align`. Mitigations
-  if needed: carry-select/pipelined accumulator, one more pipeline stage (the
-  model's POP_GAP and latency are parameters to change in both RTL and model).
+* **Timing closure at 250 MHz is unverified** (no Vivado here). The wide adders
+  and compares are now pipelined, but the open-source flow still misses 250 MHz:
+  see `docs/OPEN_BUILD.md` for its preliminary numbers and worst paths. The remaining
+  worst paths are high-fanout control nets rather than arithmetic.
 * Ramp tracking below ~1e4 hits/s at 500 MHz needs feed-forward or type-3 (above).
 * ±100 ppm acquisition below 3e-5 needs sweep-and-dwell or GPS-disciplined clocks.
 * Lock declaration degrades with dark counts above 50 % of the signal rate with

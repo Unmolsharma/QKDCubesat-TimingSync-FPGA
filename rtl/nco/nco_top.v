@@ -27,11 +27,19 @@
 // must be re-established. While `locked` stays high, K must not change:
 // that is the zero-cycle-slip requirement.
 //
-// PIPELINE (cycles after the pop cycle n): 1-4 phase detector, 4 = E (gate,
-// loop filter, averages), 5 = F (state machine, output register, loop
-// corrections strobed into nco_core), 6 = corrections visible in phase/fps.
-// nco_align releases at most one hit every 2 cycles, so the E stage of a hit
-// always sees the F-stage decisions of the previous one.
+// PIPELINE (cycles after the pop cycle n), sized for 250 MHz:
+//   n+1 .. n+6   phase detector: error ready
+//   n+7  = E     gate; sample kp and L; tavg, gear, reject run
+//   n+11         loop corrections strobed into nco_core
+//   n+12         mse updated
+//   n+13 = F     state machine, output register
+//   n+15         frequency correction visible in fps
+//   n+18         phase correction visible in phase
+// A hit's state updates finish in 7 cycles (E to F+1), and nco_align releases at
+// most one hit every POP_GAP = 8 cycles, so every hit sees the state left by the
+// previous one, exactly as if the loop were not pipelined. The corrections can
+// arrive after the next hit has been sampled (hits < 18 cycles apart): that is an
+// extra loop delay of up to 2 hits at the highest rates. README: "Loop latency".
 // model/loop_fixed.py is the bit- and cycle-exact reference.
 //
 // OUTPUT: m_valid/m_ready, 1-deep register. A result that finds the register
@@ -45,8 +53,9 @@ module nco_top #(
     parameter [47:0]  FPS_NOM       = 48'd7205759403793,  // 100 MHz: round(f*1e-12*2^56)
     parameter integer T_SLOT_PS     = 10000,              // nominal slot, for residual_ps
     parameter integer T_CLK_PS      = 4000,
-    parameter integer D             = 16,
-    parameter integer J_MAX         = 12,
+    parameter integer D             = 20,
+    parameter integer J_MAX         = 24,
+    parameter integer POP_GAP       = 8,
     parameter integer TAG_W         = 4,
     parameter integer FIFO_AW       = 4,
     parameter integer TAU_INIT_LOG2 = 16
@@ -108,20 +117,53 @@ module nco_top #(
     output reg  [15:0]        out_drop_cnt = 16'd0,
     output reg  [47:0]        t_nco = 48'd0
 );
-    always @(posedge clk) t_nco <= time_now - D;
+    // ---------------- reset, local to this block (high fanout) ----------------
+    // Stretched past the longest pipeline, so anything in flight when reset
+    // arrives has drained before the accumulators start again.
+    reg [7:0] rst_sr = 8'hFF;
+    reg       rst_r = 1'b1;
+    always @(posedge clk) begin
+        rst_sr <= {rst_sr[6:0], rst};
+        rst_r  <= rst | (|rst_sr);
+    end
+
+    // ---------------- time: t_lead = t_nco + 4, in two cycles ----------------
+    // t_nco[x] = time_now[x-1] - D, as always; t_lead is simply that, 4 cycles early.
+    localparam [47:0] LEAD_OFS = D - 5;
+    reg [24:0] tl_lo = 25'd0;
+    reg [23:0] tl_th = 24'd0;
+    reg [47:0] t_lead = 48'd0, t_d1 = 48'd0, t_d2 = 48'd0, t_d3 = 48'd0;
+    always @(posedge clk) begin
+        tl_lo  <= {1'b0, time_now[23:0]} - {1'b0, LEAD_OFS[23:0]};
+        tl_th  <= time_now[47:24];
+        t_lead <= {tl_th - LEAD_OFS[47:24] - tl_lo[24], tl_lo[23:0]};
+        t_d1   <= t_lead;
+        t_d2   <= t_d1;
+        t_d3   <= t_d2;
+        t_nco  <= t_d3;
+    end
 
     // ---------------- align ----------------
     wire              pop;
     wire [47:0]       pop_c;
-    wire [15:0]       pop_f;
+    wire [16:0]       pop_f;
     wire [TAG_W-1:0]  pop_t;
 
     nco_align #(.COARSE_W(48), .FINE_W(16), .TAG_W(TAG_W), .AW(FIFO_AW),
-                .J_MAX(J_MAX), .T_CLK_PS(T_CLK_PS)) u_align (
-        .clk(clk), .rst(rst), .t_nco(t_nco),
+                .J_MAX(J_MAX), .POP_GAP(POP_GAP), .T_CLK_PS(T_CLK_PS)) u_align (
+        .clk(clk), .rst(rst_r), .t_lead(t_lead),
         .s_valid(s_valid), .s_ready(s_ready), .s_coarse(s_coarse), .s_fine(s_fine), .s_tag(s_tag),
         .pop(pop), .pop_coarse(pop_c), .pop_fine(pop_f), .pop_tag(pop_t),
         .late(), .late_cnt(late_cnt));
+
+    // ---------------- hit position in the pipeline: st[k] = cycle n+k ----------------
+    reg [17:1] st = 17'd0;
+    always @(posedge clk) st <= rst_r ? 17'd0 : {st[16:1], pop};
+    wire e_valid = st[7];
+    wire f_valid = st[13];
+    // no timeout decision from a hit's E stage (n+7) until F + 3 (n+16)
+    reg  busy = 1'b0;
+    always @(posedge clk) busy <= |st[15:6];
 
     // ---------------- NCO ----------------
     wire [87:0]        phase;
@@ -130,27 +172,25 @@ module nco_top #(
     wire signed [47:0] corr_dphi, corr_df;
 
     nco_core #(.FPS_NOM(FPS_NOM), .T_CLK_PS(T_CLK_PS)) u_core (
-        .clk(clk), .rst(rst),
+        .clk(clk), .rst(rst_r),
         .loop_valid(corr_valid), .loop_dphi(corr_dphi), .loop_df(corr_df),
         .ext_valid(ext_valid), .ext_dphase(ext_dphase), .ext_dfreq(ext_dfreq),
         .phase(phase), .fps(fps), .fclk());
 
-    // ---------------- phase detector (stages A-D) ----------------
-    wire               d_valid;
-    wire [47:0]        d_slot;
-    wire signed [24:0] d_e24;
-    wire [23:0]        d_abs;
-    wire [31:0]        d_sq;
-    wire signed [15:0] d_resid;
-    wire [47:0]        d_coarse;
-    wire [TAG_W-1:0]   d_tag;
+    // ---------------- phase detector ----------------
+    wire [47:0]        a_c;
+    wire [TAG_W-1:0]   a_tag;
+    wire signed [24:0] e_h, ne_h;
+    wire               ge_h;
+    wire [31:0]        sq;
+    wire [47:0]        slot_h;
+    wire signed [15:0] resid_h;
 
     nco_phase_det #(.COARSE_W(48), .TAG_W(TAG_W), .T_SLOT_PS(T_SLOT_PS)) u_pd (
-        .clk(clk), .rst(rst),
-        .pop(pop), .pop_coarse(pop_c), .pop_fine(pop_f), .pop_tag(pop_t),
-        .phase(phase), .fps(fps),
-        .d_valid(d_valid), .d_slot(d_slot), .d_e24(d_e24), .d_abs(d_abs), .d_sq(d_sq),
-        .d_resid(d_resid), .d_coarse(d_coarse), .d_tag(d_tag));
+        .clk(clk), .pop(pop), .pop_coarse(pop_c), .pop_fine(pop_f), .pop_tag(pop_t),
+        .phase(phase), .fps(fps), .gate_thr(cfg_gate_thr), .st5(st[5]), .st8(st[8]),
+        .a_c(a_c), .a_tag(a_tag), .e_h(e_h), .ne_h(ne_h), .ge_h(ge_h), .sq(sq),
+        .slot_h(slot_h), .resid_h(resid_h));
 
     // ---------------- E stage: gate + loop filter + averages ----------------
     wire [1:0] state;
@@ -161,42 +201,35 @@ module nco_top #(
     wire [4:0] L;
 
     nco_gate u_gate (
-        .acquired(state != 2'd0), .gate_en(cfg_gate_en), .gate_thr(cfg_gate_thr),
-        .abs_e(d_abs), .noise(noise));
+        .acquired(state != 2'd0), .gate_en(cfg_gate_en), .outside(ge_h), .noise(noise));
 
     nco_loop_filter #(.COARSE_W(48), .TAU_INIT_LOG2(TAU_INIT_LOG2)) u_lf (
-        .clk(clk), .rst(rst),
+        .clk(clk), .rst(rst_r),
         .kp_acq(cfg_kp_acq), .kp_trk(cfg_kp_trk), .gear_log2(cfg_gear_log2),
         .tau_ovr_en(cfg_tau_ovr_en), .tau_ovr(cfg_tau_ovr),
-        .e_valid(d_valid), .e24(d_e24), .noise(noise), .acquired(state != 2'd0),
-        .coarse(d_coarse), .to_acq(to_acq), .enter_ramp(enter_ramp),
+        .e_valid(e_valid), .ne(ne_h), .noise(noise), .acquired(state != 2'd0),
+        .coarse(a_c), .to_acq(to_acq), .enter_ramp(enter_ramp),
         .corr_valid(corr_valid), .corr_dphi(corr_dphi), .corr_df(corr_df),
         .kp(kp), .gear_done(gear_done), .L(L));
 
-    // E -> F pipeline register for the per-hit output fields
-    reg               f_valid = 1'b0;
-    reg [47:0]        f_slot = 48'd0;
-    reg signed [15:0] f_resid = 16'sd0;
-    reg               f_noise = 1'b0;
-    reg signed [24:0] f_e24 = 25'sd0;
-    reg [47:0]        f_coarse = 48'd0;
-    reg [TAG_W-1:0]   f_tag = {TAG_W{1'b0}};
-    always @(posedge clk) begin
-        f_valid  <= d_valid & ~rst;
-        f_slot   <= d_slot;
-        f_resid  <= d_resid;
-        f_noise  <= noise;
-        f_e24    <= d_e24;
-        f_coarse <= d_coarse;
-        f_tag    <= d_tag;
-    end
+    // Per-hit fields held for the F stage (next hit's a_c arrives at its n+1, >= n+9)
+    reg [47:0]      e_c = 48'd0;
+    reg [TAG_W-1:0] e_tag = {TAG_W{1'b0}};
+    reg             f_noise = 1'b0;
+    always @(posedge clk)
+        if (e_valid) begin
+            e_c     <= a_c;
+            e_tag   <= a_tag;
+            f_noise <= noise;
+        end
 
     nco_lock_det #(.COARSE_W(48)) u_ld (
-        .clk(clk), .rst(rst), .t_nco(t_nco),
+        .clk(clk), .rst(rst_r), .t_nco(t_nco),
         .mse_shift(cfg_mse_shift), .mse_shift_trk(cfg_mse_shift_trk),
         .lock_thr(cfg_lock_thr), .unlock_thr(cfg_unlock_thr), .rej_max(cfg_rej_max),
         .to_shift(cfg_to_shift), .slip_thr(cfg_slip_thr), .slip_unlock(cfg_slip_unlock),
-        .e_valid(d_valid), .e24(d_e24), .sq(d_sq), .noise(noise), .coarse(d_coarse),
+        .e_valid(e_valid), .e24(e_h), .sq(sq), .noise(noise),
+        .st_commit(st[11]), .busy(busy), .coarse(e_c),
         .f_valid(f_valid), .gear_done(gear_done), .L(L),
         .to_acq(to_acq), .enter_ramp(enter_ramp), .locked_next(locked_next),
         .state(state), .mse(tlm_mse), .sgn(tlm_sgn),
@@ -205,7 +238,7 @@ module nco_top #(
 
     // ---------------- F stage: output register ----------------
     always @(posedge clk) begin
-        if (rst) begin
+        if (rst_r) begin
             m_valid <= 1'b0;
             out_drop_cnt <= 16'd0;
         end else begin
@@ -213,13 +246,13 @@ module nco_top #(
             if (f_valid) begin
                 if (!m_valid || m_ready) begin
                     m_valid    <= 1'b1;
-                    m_slot     <= f_slot;
-                    m_resid_ps <= f_resid;
+                    m_slot     <= slot_h;
+                    m_resid_ps <= resid_h;
                     m_noise    <= f_noise;
                     m_locked   <= locked_next;
-                    m_e24      <= f_e24;
-                    m_coarse   <= f_coarse;
-                    m_tag      <= f_tag;
+                    m_e24      <= e_h;
+                    m_coarse   <= e_c;
+                    m_tag      <= e_tag;
                 end else if (out_drop_cnt != 16'hFFFF) begin
                     out_drop_cnt <= out_drop_cnt + 1'b1;
                 end

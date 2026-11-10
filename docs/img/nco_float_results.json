@@ -18,7 +18,11 @@
   "tau_ovr": null,
   "slip_shift": 5,
   "slip_thr": 0.125,
-  "slip_unlock": true
+  "slip_unlock": true,
+  "dp_lat": 0,
+  "df_lat": 0,
+  "pop_gap": 0,
+  "j_max": null
  },
  "trace": {
   "locked": true,
@@ -1017,5 +1021,1729 @@
    "detected_unlocks": 0,
    "suspected_slips": 0
   }
- ]
+ ],
+ "latency_check": {
+  "delay": {
+   "dp_lat": 18,
+   "df_lat": 22,
+   "pop_gap": 8,
+   "j_max": 24
+  },
+  "rows": [
+   {
+    "f_src": 100000000.0,
+    "p": 0.5,
+    "jitter": 200.0,
+    "dark": 0.1,
+    "U": 100.0,
+    "ideal": {
+     "ok": 24,
+     "n": 24,
+     "slips": 0,
+     "undetected": 0,
+     "unlocks": 0,
+     "late": 0,
+     "hits": 136622,
+     "lock_hits": 397.0,
+     "rms": 0.06715412877663468
+    },
+    "rtl": {
+     "ok": 24,
+     "n": 24,
+     "slips": 0,
+     "undetected": 0,
+     "unlocks": 0,
+     "late": 56,
+     "hits": 136727,
+     "lock_hits": 401.0,
+     "rms": 0.06715037204114213
+    },
+    "rtl_x2": {
+     "ok": 21,
+     "n": 24,
+     "slips": 0,
+     "undetected": 0,
+     "unlocks": 0,
+     "late": 78,
+     "hits": 334482,
+     "lock_hits": 481.0,
+     "rms": 0.06737030447264018
+    },
+    "acc_rate": 23730431.54761905
+   },
+   {
+    "f_src": 100000000.0,
+    "p": 0.5,
+    "jitter": 200.0,
+    "dark": 0.1,
+    "U": 1.0,
+    "ideal": {
+     "ok": 24,
+     "n": 24,
+     "slips": 0,
+     "undetected": 0,
+     "unlocks": 0,
+     "late": 0,
+     "hits": 136591,
+     "lock_hits": 395.5,
+     "rms": 0.06700865688989978
+    },
+    "rtl": {
+     "ok": 24,
+     "n": 24,
+     "slips": 0,
+     "undetected": 0,
+     "unlocks": 0,
+     "late": 74,
+     "hits": 136757,
+     "lock_hits": 400.5,
+     "rms": 0.06702622449865576
+    },
+    "rtl_x2": {
+     "ok": 20,
+     "n": 24,
+     "slips": 0,
+     "undetected": 0,
+     "unlocks": 0,
+     "late": 125,
+     "hits": 348107,
+     "lock_hits": 452.0,
+     "rms": 0.06758992167733566
+    },
+    "acc_rate": 23730431.54761905
+   },
+   {
+    "f_src": 100000000.0,
+    "p": 0.3,
+    "jitter": 200.0,
+    "dark": 0.1,
+    "U": 100.0,
+    "ideal": {
+     "ok": 24,
+     "n": 24,
+     "slips": 0,
+     "undetected": 0,
+     "unlocks": 0,
+     "late": 0,
+     "hits": 138767,
+     "lock_hits": 403.5,
+     "rms": 0.07683443454927903
+    },
+    "rtl": {
+     "ok": 24,
+     "n": 24,
+     "slips": 0,
+     "undetected": 0,
+     "unlocks": 0,
+     "late": 0,
+     "hits": 138876,
+     "lock_hits": 407.0,
+     "rms": 0.07683799970223508
+    },
+    "rtl_x2": {
+     "ok": 22,
+     "n": 24,
+     "slips": 0,
+     "undetected": 0,
+     "unlocks": 0,
+     "late": 5,
+     "hits": 343191,
+     "lock_hits": 429.0,
+     "rms": 0.07659287532635756
+    },
+    "acc_rate": 21330046.875
+   },
+   {
+    "f_src": 100000000.0,
+    "p": 0.3,
+    "jitter": 200.0,
+    "dark": 0.1,
+    "U": 1.0,
+    "ideal": {
+     "ok": 24,
+     "n": 24,
+     "slips": 0,
+     "undetected": 0,
+     "unlocks": 0,
+     "late": 0,
+     "hits": 138831,
+     "lock_hits": 404.5,
+     "rms": 0.07718978646792896
+    },
+    "rtl": {
+     "ok": 24,
+     "n": 24,
+     "slips": 0,
+     "undetected": 0,
+     "unlocks": 0,
+     "late": 3,
+     "hits": 138946,
+     "lock_hits": 409.5,
+     "rms": 0.07715494788417163
+    },
+    "rtl_x2": {
+     "ok": 20,
+     "n": 24,
+     "slips": 0,
+     "undetected": 0,
+     "unlocks": 0,
+     "late": 15,
+     "hits": 511503,
+     "lock_hits": 420.5,
+     "rms": 0.07679880295063626
+    },
+    "acc_rate": 21330046.875
+   },
+   {
+    "f_src": 100000000.0,
+    "p": 0.1,
+    "jitter": 200.0,
+    "dark": 0.1,
+    "U": 100.0,
+    "ideal": {
+     "ok": 24,
+     "n": 24,
+     "slips": 0,
+     "undetected": 0,
+     "unlocks": 0,
+     "late": 0,
+     "hits": 140857,
+     "lock_hits": 411.5,
+     "rms": 0.08499650338013176
+    },
+    "rtl": {
+     "ok": 24,
+     "n": 24,
+     "slips": 0,
+     "undetected": 0,
+     "unlocks": 0,
+     "late": 0,
+     "hits": 140889,
+     "lock_hits": 412.5,
+     "rms": 0.08500168171406897
+    },
+    "rtl_x2": {
+     "ok": 24,
+     "n": 24,
+     "slips": 0,
+     "undetected": 0,
+     "unlocks": 0,
+     "late": 0,
+     "hits": 141021,
+     "lock_hits": 416.5,
+     "rms": 0.0849981601566319
+    },
+    "acc_rate": 10757307.291666666
+   },
+   {
+    "f_src": 100000000.0,
+    "p": 0.1,
+    "jitter": 200.0,
+    "dark": 0.1,
+    "U": 1.0,
+    "ideal": {
+     "ok": 24,
+     "n": 24,
+     "slips": 0,
+     "undetected": 0,
+     "unlocks": 0,
+     "late": 0,
+     "hits": 140921,
+     "lock_hits": 415.0,
+     "rms": 0.0845427004977456
+    },
+    "rtl": {
+     "ok": 24,
+     "n": 24,
+     "slips": 0,
+     "undetected": 0,
+     "unlocks": 0,
+     "late": 0,
+     "hits": 140950,
+     "lock_hits": 417.0,
+     "rms": 0.08453707035491224
+    },
+    "rtl_x2": {
+     "ok": 24,
+     "n": 24,
+     "slips": 0,
+     "undetected": 0,
+     "unlocks": 0,
+     "late": 0,
+     "hits": 141105,
+     "lock_hits": 421.5,
+     "rms": 0.08459686538883676
+    },
+    "acc_rate": 10757307.291666666
+   },
+   {
+    "f_src": 100000000.0,
+    "p": 0.03,
+    "jitter": 200.0,
+    "dark": 0.1,
+    "U": 100.0,
+    "ideal": {
+     "ok": 24,
+     "n": 24,
+     "slips": 0,
+     "undetected": 0,
+     "unlocks": 0,
+     "late": 0,
+     "hits": 141740,
+     "lock_hits": 413.5,
+     "rms": 0.08821194709176743
+    },
+    "rtl": {
+     "ok": 24,
+     "n": 24,
+     "slips": 0,
+     "undetected": 0,
+     "unlocks": 0,
+     "late": 0,
+     "hits": 141747,
+     "lock_hits": 413.5,
+     "rms": 0.08821314542464893
+    },
+    "rtl_x2": {
+     "ok": 24,
+     "n": 24,
+     "slips": 0,
+     "undetected": 0,
+     "unlocks": 0,
+     "late": 0,
+     "hits": 141758,
+     "lock_hits": 414.5,
+     "rms": 0.08820286712193737
+    },
+    "acc_rate": 3170623.6607142854
+   },
+   {
+    "f_src": 100000000.0,
+    "p": 0.03,
+    "jitter": 200.0,
+    "dark": 0.1,
+    "U": 1.0,
+    "ideal": {
+     "ok": 24,
+     "n": 24,
+     "slips": 0,
+     "undetected": 0,
+     "unlocks": 0,
+     "late": 0,
+     "hits": 141770,
+     "lock_hits": 413.5,
+     "rms": 0.08813618967770065
+    },
+    "rtl": {
+     "ok": 24,
+     "n": 24,
+     "slips": 0,
+     "undetected": 0,
+     "unlocks": 0,
+     "late": 0,
+     "hits": 141785,
+     "lock_hits": 414.5,
+     "rms": 0.08814878506175128
+    },
+    "rtl_x2": {
+     "ok": 24,
+     "n": 24,
+     "slips": 0,
+     "undetected": 0,
+     "unlocks": 0,
+     "late": 0,
+     "hits": 141825,
+     "lock_hits": 418.0,
+     "rms": 0.08814887454909227
+    },
+    "acc_rate": 3170623.6607142854
+   },
+   {
+    "f_src": 100000000.0,
+    "p": 0.01,
+    "jitter": 200.0,
+    "dark": 0.1,
+    "U": 100.0,
+    "ideal": {
+     "ok": 24,
+     "n": 24,
+     "slips": 0,
+     "undetected": 0,
+     "unlocks": 0,
+     "late": 0,
+     "hits": 141978,
+     "lock_hits": 413.0,
+     "rms": 0.08929483079505762
+    },
+    "rtl": {
+     "ok": 24,
+     "n": 24,
+     "slips": 0,
+     "undetected": 0,
+     "unlocks": 0,
+     "late": 0,
+     "hits": 141981,
+     "lock_hits": 413.0,
+     "rms": 0.08929469200809032
+    },
+    "rtl_x2": {
+     "ok": 24,
+     "n": 24,
+     "slips": 0,
+     "undetected": 0,
+     "unlocks": 0,
+     "late": 0,
+     "hits": 141984,
+     "lock_hits": 413.0,
+     "rms": 0.08928920924269738
+    },
+    "acc_rate": 1276151.1160714284
+   },
+   {
+    "f_src": 100000000.0,
+    "p": 0.01,
+    "jitter": 200.0,
+    "dark": 0.1,
+    "U": 1.0,
+    "ideal": {
+     "ok": 24,
+     "n": 24,
+     "slips": 0,
+     "undetected": 0,
+     "unlocks": 0,
+     "late": 0,
+     "hits": 142181,
+     "lock_hits": 419.5,
+     "rms": 0.08878003484702686
+    },
+    "rtl": {
+     "ok": 24,
+     "n": 24,
+     "slips": 0,
+     "undetected": 0,
+     "unlocks": 0,
+     "late": 0,
+     "hits": 142181,
+     "lock_hits": 419.5,
+     "rms": 0.08878017985588259
+    },
+    "rtl_x2": {
+     "ok": 24,
+     "n": 24,
+     "slips": 0,
+     "undetected": 0,
+     "unlocks": 0,
+     "late": 0,
+     "hits": 142181,
+     "lock_hits": 419.5,
+     "rms": 0.08878057941804203
+    },
+    "acc_rate": 1276151.1160714284
+   },
+   {
+    "f_src": 100000000.0,
+    "p": 0.001,
+    "jitter": 200.0,
+    "dark": 0.1,
+    "U": 100.0,
+    "ideal": {
+     "ok": 24,
+     "n": 24,
+     "slips": 0,
+     "undetected": 0,
+     "unlocks": 0,
+     "late": 0,
+     "hits": 142339,
+     "lock_hits": 416.5,
+     "rms": 0.08931948071483257
+    },
+    "rtl": {
+     "ok": 24,
+     "n": 24,
+     "slips": 0,
+     "undetected": 0,
+     "unlocks": 0,
+     "late": 0,
+     "hits": 142341,
+     "lock_hits": 417.0,
+     "rms": 0.08931938920885318
+    },
+    "rtl_x2": {
+     "ok": 24,
+     "n": 24,
+     "slips": 0,
+     "undetected": 0,
+     "unlocks": 0,
+     "late": 0,
+     "hits": 142341,
+     "lock_hits": 417.0,
+     "rms": 0.08931950160848184
+    },
+    "acc_rate": 129667.08333333333
+   },
+   {
+    "f_src": 100000000.0,
+    "p": 0.001,
+    "jitter": 200.0,
+    "dark": 0.1,
+    "U": 1.0,
+    "ideal": {
+     "ok": 24,
+     "n": 24,
+     "slips": 0,
+     "undetected": 0,
+     "unlocks": 0,
+     "late": 0,
+     "hits": 142309,
+     "lock_hits": 418.5,
+     "rms": 0.08957445633561789
+    },
+    "rtl": {
+     "ok": 24,
+     "n": 24,
+     "slips": 0,
+     "undetected": 0,
+     "unlocks": 0,
+     "late": 0,
+     "hits": 142309,
+     "lock_hits": 418.5,
+     "rms": 0.08957440157903233
+    },
+    "rtl_x2": {
+     "ok": 24,
+     "n": 24,
+     "slips": 0,
+     "undetected": 0,
+     "unlocks": 0,
+     "late": 0,
+     "hits": 142309,
+     "lock_hits": 418.5,
+     "rms": 0.08957437732747796
+    },
+    "acc_rate": 129667.08333333333
+   },
+   {
+    "f_src": 100000000.0,
+    "p": 0.0001,
+    "jitter": 200.0,
+    "dark": 0.1,
+    "U": 100.0,
+    "ideal": {
+     "ok": 24,
+     "n": 24,
+     "slips": 0,
+     "undetected": 0,
+     "unlocks": 0,
+     "late": 0,
+     "hits": 151433,
+     "lock_hits": 651.5,
+     "rms": 0.08963690330791929
+    },
+    "rtl": {
+     "ok": 24,
+     "n": 24,
+     "slips": 0,
+     "undetected": 0,
+     "unlocks": 0,
+     "late": 0,
+     "hits": 151433,
+     "lock_hits": 651.5,
+     "rms": 0.0896368955662385
+    },
+    "rtl_x2": {
+     "ok": 24,
+     "n": 24,
+     "slips": 0,
+     "undetected": 0,
+     "unlocks": 0,
+     "late": 0,
+     "hits": 151433,
+     "lock_hits": 651.5,
+     "rms": 0.08963690561654376
+    },
+    "acc_rate": 12995.350446428572
+   },
+   {
+    "f_src": 100000000.0,
+    "p": 0.0001,
+    "jitter": 200.0,
+    "dark": 0.1,
+    "U": 1.0,
+    "ideal": {
+     "ok": 24,
+     "n": 24,
+     "slips": 0,
+     "undetected": 0,
+     "unlocks": 0,
+     "late": 0,
+     "hits": 141938,
+     "lock_hits": 412.0,
+     "rms": 0.08923564182584309
+    },
+    "rtl": {
+     "ok": 24,
+     "n": 24,
+     "slips": 0,
+     "undetected": 0,
+     "unlocks": 0,
+     "late": 0,
+     "hits": 141938,
+     "lock_hits": 412.0,
+     "rms": 0.08923566607793158
+    },
+    "rtl_x2": {
+     "ok": 24,
+     "n": 24,
+     "slips": 0,
+     "undetected": 0,
+     "unlocks": 0,
+     "late": 0,
+     "hits": 141938,
+     "lock_hits": 412.0,
+     "rms": 0.08923569688842103
+    },
+    "acc_rate": 12995.350446428572
+   },
+   {
+    "f_src": 100000000.0,
+    "p": 0.3,
+    "jitter": 500.0,
+    "dark": 0.5,
+    "U": 100.0,
+    "ideal": {
+     "ok": 24,
+     "n": 24,
+     "slips": 0,
+     "undetected": 0,
+     "unlocks": 0,
+     "late": 0,
+     "hits": 190497,
+     "lock_hits": 879.0,
+     "rms": 0.15420988857511
+    },
+    "rtl": {
+     "ok": 22,
+     "n": 24,
+     "slips": 0,
+     "undetected": 0,
+     "unlocks": 0,
+     "late": 3,
+     "hits": 385108,
+     "lock_hits": 1192.0,
+     "rms": 0.15397584839270562
+    },
+    "rtl_x2": {
+     "ok": 2,
+     "n": 24,
+     "slips": 0,
+     "undetected": 0,
+     "unlocks": 0,
+     "late": 30,
+     "hits": 2137659,
+     "lock_hits": 19353.5,
+     "rms": 0.15410875041919958
+    },
+    "acc_rate": 21330046.875
+   },
+   {
+    "f_src": 100000000.0,
+    "p": 0.3,
+    "jitter": 500.0,
+    "dark": 0.5,
+    "U": 1.0,
+    "ideal": {
+     "ok": 24,
+     "n": 24,
+     "slips": 0,
+     "undetected": 0,
+     "unlocks": 0,
+     "late": 0,
+     "hits": 193722,
+     "lock_hits": 1016.0,
+     "rms": 0.15459714397085314
+    },
+    "rtl": {
+     "ok": 23,
+     "n": 24,
+     "slips": 0,
+     "undetected": 0,
+     "unlocks": 0,
+     "late": 0,
+     "hits": 237540,
+     "lock_hits": 1688.0,
+     "rms": 0.15474687103934368
+    },
+    "rtl_x2": {
+     "ok": 6,
+     "n": 24,
+     "slips": 0,
+     "undetected": 0,
+     "unlocks": 0,
+     "late": 24,
+     "hits": 1857408,
+     "lock_hits": 3112.0,
+     "rms": 0.1529793799638828
+    },
+    "acc_rate": 21330046.875
+   },
+   {
+    "f_src": 100000000.0,
+    "p": 0.1,
+    "jitter": 500.0,
+    "dark": 0.5,
+    "U": 100.0,
+    "ideal": {
+     "ok": 24,
+     "n": 24,
+     "slips": 0,
+     "undetected": 0,
+     "unlocks": 0,
+     "late": 0,
+     "hits": 225045,
+     "lock_hits": 1761.0,
+     "rms": 0.1659255545641366
+    },
+    "rtl": {
+     "ok": 24,
+     "n": 24,
+     "slips": 0,
+     "undetected": 0,
+     "unlocks": 0,
+     "late": 0,
+     "hits": 239473,
+     "lock_hits": 1966.5,
+     "rms": 0.16582139219961725
+    },
+    "rtl_x2": {
+     "ok": 14,
+     "n": 24,
+     "slips": 0,
+     "undetected": 0,
+     "unlocks": 0,
+     "late": 0,
+     "hits": 1434762,
+     "lock_hits": 5606.0,
+     "rms": 0.16459625541843304
+    },
+    "acc_rate": 10757307.291666666
+   },
+   {
+    "f_src": 100000000.0,
+    "p": 0.1,
+    "jitter": 500.0,
+    "dark": 0.5,
+    "U": 1.0,
+    "ideal": {
+     "ok": 24,
+     "n": 24,
+     "slips": 0,
+     "undetected": 0,
+     "unlocks": 0,
+     "late": 0,
+     "hits": 247792,
+     "lock_hits": 2104.5,
+     "rms": 0.16607066303763598
+    },
+    "rtl": {
+     "ok": 22,
+     "n": 24,
+     "slips": 0,
+     "undetected": 0,
+     "unlocks": 0,
+     "late": 0,
+     "hits": 426023,
+     "lock_hits": 2564.0,
+     "rms": 0.166013433932779
+    },
+    "rtl_x2": {
+     "ok": 20,
+     "n": 24,
+     "slips": 0,
+     "undetected": 0,
+     "unlocks": 0,
+     "late": 0,
+     "hits": 774577,
+     "lock_hits": 3254.0,
+     "rms": 0.16578895784752126
+    },
+    "acc_rate": 10757307.291666666
+   },
+   {
+    "f_src": 100000000.0,
+    "p": 0.01,
+    "jitter": 500.0,
+    "dark": 0.5,
+    "U": 100.0,
+    "ideal": {
+     "ok": 22,
+     "n": 24,
+     "slips": 0,
+     "undetected": 0,
+     "unlocks": 0,
+     "late": 0,
+     "hits": 331512,
+     "lock_hits": 4906.5,
+     "rms": 0.17176964299429753
+    },
+    "rtl": {
+     "ok": 23,
+     "n": 24,
+     "slips": 0,
+     "undetected": 0,
+     "unlocks": 0,
+     "late": 0,
+     "hits": 311027,
+     "lock_hits": 4581.5,
+     "rms": 0.17188209359491288
+    },
+    "rtl_x2": {
+     "ok": 23,
+     "n": 24,
+     "slips": 0,
+     "undetected": 0,
+     "unlocks": 0,
+     "late": 0,
+     "hits": 311269,
+     "lock_hits": 4582.0,
+     "rms": 0.1718597257328555
+    },
+    "acc_rate": 1276151.1160714284
+   },
+   {
+    "f_src": 100000000.0,
+    "p": 0.01,
+    "jitter": 500.0,
+    "dark": 0.5,
+    "U": 1.0,
+    "ideal": {
+     "ok": 24,
+     "n": 24,
+     "slips": 0,
+     "undetected": 0,
+     "unlocks": 0,
+     "late": 0,
+     "hits": 294581,
+     "lock_hits": 3912.5,
+     "rms": 0.17173749273730035
+    },
+    "rtl": {
+     "ok": 24,
+     "n": 24,
+     "slips": 0,
+     "undetected": 0,
+     "unlocks": 0,
+     "late": 0,
+     "hits": 295222,
+     "lock_hits": 3380.5,
+     "rms": 0.17166169065412218
+    },
+    "rtl_x2": {
+     "ok": 24,
+     "n": 24,
+     "slips": 0,
+     "undetected": 0,
+     "unlocks": 0,
+     "late": 0,
+     "hits": 295685,
+     "lock_hits": 3222.5,
+     "rms": 0.17169820481589515
+    },
+    "acc_rate": 1276151.1160714284
+   },
+   {
+    "f_src": 100000000.0,
+    "p": 0.001,
+    "jitter": 500.0,
+    "dark": 0.5,
+    "U": 100.0,
+    "ideal": {
+     "ok": 23,
+     "n": 24,
+     "slips": 0,
+     "undetected": 0,
+     "unlocks": 0,
+     "late": 0,
+     "hits": 315230,
+     "lock_hits": 4364.5,
+     "rms": 0.17131265662848608
+    },
+    "rtl": {
+     "ok": 23,
+     "n": 24,
+     "slips": 0,
+     "undetected": 0,
+     "unlocks": 0,
+     "late": 0,
+     "hits": 315230,
+     "lock_hits": 4364.5,
+     "rms": 0.17131248675681002
+    },
+    "rtl_x2": {
+     "ok": 23,
+     "n": 24,
+     "slips": 0,
+     "undetected": 0,
+     "unlocks": 0,
+     "late": 0,
+     "hits": 315230,
+     "lock_hits": 4364.5,
+     "rms": 0.17131250985497778
+    },
+    "acc_rate": 129667.08333333333
+   },
+   {
+    "f_src": 100000000.0,
+    "p": 0.001,
+    "jitter": 500.0,
+    "dark": 0.5,
+    "U": 1.0,
+    "ideal": {
+     "ok": 24,
+     "n": 24,
+     "slips": 0,
+     "undetected": 0,
+     "unlocks": 0,
+     "late": 0,
+     "hits": 317412,
+     "lock_hits": 5077.0,
+     "rms": 0.17157909967836749
+    },
+    "rtl": {
+     "ok": 24,
+     "n": 24,
+     "slips": 0,
+     "undetected": 0,
+     "unlocks": 0,
+     "late": 0,
+     "hits": 312620,
+     "lock_hits": 4780.5,
+     "rms": 0.1715488140625593
+    },
+    "rtl_x2": {
+     "ok": 24,
+     "n": 24,
+     "slips": 0,
+     "undetected": 0,
+     "unlocks": 0,
+     "late": 0,
+     "hits": 315542,
+     "lock_hits": 4780.5,
+     "rms": 0.1715551504006044
+    },
+    "acc_rate": 129667.08333333333
+   },
+   {
+    "f_src": 100000000.0,
+    "p": 0.0001,
+    "jitter": 500.0,
+    "dark": 0.5,
+    "U": 100.0,
+    "ideal": {
+     "ok": 24,
+     "n": 24,
+     "slips": 0,
+     "undetected": 0,
+     "unlocks": 0,
+     "late": 0,
+     "hits": 285765,
+     "lock_hits": 3442.5,
+     "rms": 0.17114534910738333
+    },
+    "rtl": {
+     "ok": 24,
+     "n": 24,
+     "slips": 0,
+     "undetected": 0,
+     "unlocks": 0,
+     "late": 0,
+     "hits": 285765,
+     "lock_hits": 3442.5,
+     "rms": 0.17114535161580605
+    },
+    "rtl_x2": {
+     "ok": 24,
+     "n": 24,
+     "slips": 0,
+     "undetected": 0,
+     "unlocks": 0,
+     "late": 0,
+     "hits": 285765,
+     "lock_hits": 3442.5,
+     "rms": 0.17114544304837345
+    },
+    "acc_rate": 12995.350446428572
+   },
+   {
+    "f_src": 100000000.0,
+    "p": 0.0001,
+    "jitter": 500.0,
+    "dark": 0.5,
+    "U": 1.0,
+    "ideal": {
+     "ok": 23,
+     "n": 24,
+     "slips": 0,
+     "undetected": 0,
+     "unlocks": 0,
+     "late": 0,
+     "hits": 300438,
+     "lock_hits": 3449.5,
+     "rms": 0.1718316483973855
+    },
+    "rtl": {
+     "ok": 23,
+     "n": 24,
+     "slips": 0,
+     "undetected": 0,
+     "unlocks": 0,
+     "late": 0,
+     "hits": 300438,
+     "lock_hits": 3449.5,
+     "rms": 0.17183172538833769
+    },
+    "rtl_x2": {
+     "ok": 23,
+     "n": 24,
+     "slips": 0,
+     "undetected": 0,
+     "unlocks": 0,
+     "late": 0,
+     "hits": 300438,
+     "lock_hits": 3449.5,
+     "rms": 0.17183172637763602
+    },
+    "acc_rate": 12995.350446428572
+   },
+   {
+    "f_src": 500000000.0,
+    "p": 0.1,
+    "jitter": 50.0,
+    "dark": 0.1,
+    "U": 100.0,
+    "ideal": {
+     "ok": 24,
+     "n": 24,
+     "slips": 0,
+     "undetected": 0,
+     "unlocks": 0,
+     "late": 0,
+     "hits": 141118,
+     "lock_hits": 417.0,
+     "rms": 0.08790366853994162
+    },
+    "rtl": {
+     "ok": 24,
+     "n": 24,
+     "slips": 0,
+     "undetected": 0,
+     "unlocks": 0,
+     "late": 0,
+     "hits": 141212,
+     "lock_hits": 420.5,
+     "rms": 0.0878916697126753
+    },
+    "rtl_x2": {
+     "ok": 23,
+     "n": 24,
+     "slips": 0,
+     "undetected": 0,
+     "unlocks": 0,
+     "late": 0,
+     "hits": 192474,
+     "lock_hits": 448.0,
+     "rms": 0.08779761317934318
+    },
+    "acc_rate": 20146160.714285716
+   },
+   {
+    "f_src": 500000000.0,
+    "p": 0.1,
+    "jitter": 50.0,
+    "dark": 0.1,
+    "U": 1.0,
+    "ideal": {
+     "ok": 24,
+     "n": 24,
+     "slips": 0,
+     "undetected": 0,
+     "unlocks": 0,
+     "late": 0,
+     "hits": 141125,
+     "lock_hits": 416.5,
+     "rms": 0.08751880072598528
+    },
+    "rtl": {
+     "ok": 24,
+     "n": 24,
+     "slips": 0,
+     "undetected": 0,
+     "unlocks": 0,
+     "late": 0,
+     "hits": 141206,
+     "lock_hits": 419.0,
+     "rms": 0.08749924244596556
+    },
+    "rtl_x2": {
+     "ok": 23,
+     "n": 24,
+     "slips": 0,
+     "undetected": 0,
+     "unlocks": 0,
+     "late": 0,
+     "hits": 192116,
+     "lock_hits": 440.0,
+     "rms": 0.08743804842015117
+    },
+    "acc_rate": 20146160.714285716
+   },
+   {
+    "f_src": 500000000.0,
+    "p": 0.03,
+    "jitter": 50.0,
+    "dark": 0.1,
+    "U": 100.0,
+    "ideal": {
+     "ok": 24,
+     "n": 24,
+     "slips": 0,
+     "undetected": 0,
+     "unlocks": 0,
+     "late": 0,
+     "hits": 142069,
+     "lock_hits": 416.5,
+     "rms": 0.09003509981711422
+    },
+    "rtl": {
+     "ok": 24,
+     "n": 24,
+     "slips": 0,
+     "undetected": 0,
+     "unlocks": 0,
+     "late": 0,
+     "hits": 142117,
+     "lock_hits": 418.0,
+     "rms": 0.09003698366516784
+    },
+    "rtl_x2": {
+     "ok": 24,
+     "n": 24,
+     "slips": 0,
+     "undetected": 0,
+     "unlocks": 0,
+     "late": 0,
+     "hits": 142232,
+     "lock_hits": 422.5,
+     "rms": 0.0900176881381239
+    },
+    "acc_rate": 13648069.19642857
+   },
+   {
+    "f_src": 500000000.0,
+    "p": 0.03,
+    "jitter": 50.0,
+    "dark": 0.1,
+    "U": 1.0,
+    "ideal": {
+     "ok": 24,
+     "n": 24,
+     "slips": 0,
+     "undetected": 0,
+     "unlocks": 0,
+     "late": 0,
+     "hits": 141973,
+     "lock_hits": 422.5,
+     "rms": 0.08990571021875206
+    },
+    "rtl": {
+     "ok": 24,
+     "n": 24,
+     "slips": 0,
+     "undetected": 0,
+     "unlocks": 0,
+     "late": 0,
+     "hits": 142037,
+     "lock_hits": 424.5,
+     "rms": 0.08989317670006917
+    },
+    "rtl_x2": {
+     "ok": 24,
+     "n": 24,
+     "slips": 0,
+     "undetected": 0,
+     "unlocks": 0,
+     "late": 0,
+     "hits": 142124,
+     "lock_hits": 427.0,
+     "rms": 0.08986272517985672
+    },
+    "acc_rate": 13648069.19642857
+   },
+   {
+    "f_src": 500000000.0,
+    "p": 0.01,
+    "jitter": 50.0,
+    "dark": 0.1,
+    "U": 100.0,
+    "ideal": {
+     "ok": 24,
+     "n": 24,
+     "slips": 0,
+     "undetected": 0,
+     "unlocks": 0,
+     "late": 0,
+     "hits": 142056,
+     "lock_hits": 418.5,
+     "rms": 0.09095884053886438
+    },
+    "rtl": {
+     "ok": 24,
+     "n": 24,
+     "slips": 0,
+     "undetected": 0,
+     "unlocks": 0,
+     "late": 0,
+     "hits": 142138,
+     "lock_hits": 418.5,
+     "rms": 0.09099031742063028
+    },
+    "rtl_x2": {
+     "ok": 24,
+     "n": 24,
+     "slips": 0,
+     "undetected": 0,
+     "unlocks": 0,
+     "late": 0,
+     "hits": 142179,
+     "lock_hits": 420.0,
+     "rms": 0.0910075124586776
+    },
+    "acc_rate": 5776089.285714285
+   },
+   {
+    "f_src": 500000000.0,
+    "p": 0.01,
+    "jitter": 50.0,
+    "dark": 0.1,
+    "U": 1.0,
+    "ideal": {
+     "ok": 24,
+     "n": 24,
+     "slips": 0,
+     "undetected": 0,
+     "unlocks": 0,
+     "late": 0,
+     "hits": 142241,
+     "lock_hits": 421.5,
+     "rms": 0.09021012314329746
+    },
+    "rtl": {
+     "ok": 24,
+     "n": 24,
+     "slips": 0,
+     "undetected": 0,
+     "unlocks": 0,
+     "late": 0,
+     "hits": 142263,
+     "lock_hits": 420.5,
+     "rms": 0.09021967115209371
+    },
+    "rtl_x2": {
+     "ok": 24,
+     "n": 24,
+     "slips": 0,
+     "undetected": 0,
+     "unlocks": 0,
+     "late": 0,
+     "hits": 142289,
+     "lock_hits": 422.5,
+     "rms": 0.09023390791881201
+    },
+    "acc_rate": 5776089.285714285
+   },
+   {
+    "f_src": 500000000.0,
+    "p": 0.001,
+    "jitter": 50.0,
+    "dark": 0.1,
+    "U": 100.0,
+    "ideal": {
+     "ok": 24,
+     "n": 24,
+     "slips": 0,
+     "undetected": 0,
+     "unlocks": 0,
+     "late": 0,
+     "hits": 142408,
+     "lock_hits": 416.5,
+     "rms": 0.0906363240539988
+    },
+    "rtl": {
+     "ok": 24,
+     "n": 24,
+     "slips": 0,
+     "undetected": 0,
+     "unlocks": 0,
+     "late": 0,
+     "hits": 142410,
+     "lock_hits": 416.5,
+     "rms": 0.09063619599620128
+    },
+    "rtl_x2": {
+     "ok": 24,
+     "n": 24,
+     "slips": 0,
+     "undetected": 0,
+     "unlocks": 0,
+     "late": 0,
+     "hits": 142430,
+     "lock_hits": 417.5,
+     "rms": 0.0906540035156476
+    },
+    "acc_rate": 641930.0223214285
+   },
+   {
+    "f_src": 500000000.0,
+    "p": 0.001,
+    "jitter": 50.0,
+    "dark": 0.1,
+    "U": 1.0,
+    "ideal": {
+     "ok": 24,
+     "n": 24,
+     "slips": 0,
+     "undetected": 0,
+     "unlocks": 0,
+     "late": 0,
+     "hits": 142315,
+     "lock_hits": 418.0,
+     "rms": 0.09086320638265842
+    },
+    "rtl": {
+     "ok": 24,
+     "n": 24,
+     "slips": 0,
+     "undetected": 0,
+     "unlocks": 0,
+     "late": 0,
+     "hits": 142315,
+     "lock_hits": 418.0,
+     "rms": 0.09086302367555761
+    },
+    "rtl_x2": {
+     "ok": 24,
+     "n": 24,
+     "slips": 0,
+     "undetected": 0,
+     "unlocks": 0,
+     "late": 0,
+     "hits": 142320,
+     "lock_hits": 419.0,
+     "rms": 0.09086301026957529
+    },
+    "acc_rate": 641930.0223214285
+   },
+   {
+    "f_src": 500000000.0,
+    "p": 0.0001,
+    "jitter": 50.0,
+    "dark": 0.1,
+    "U": 100.0,
+    "ideal": {
+     "ok": 24,
+     "n": 24,
+     "slips": 0,
+     "undetected": 0,
+     "unlocks": 0,
+     "late": 0,
+     "hits": 150384,
+     "lock_hits": 682.5,
+     "rms": 0.09076344594104209
+    },
+    "rtl": {
+     "ok": 24,
+     "n": 24,
+     "slips": 0,
+     "undetected": 0,
+     "unlocks": 0,
+     "late": 0,
+     "hits": 150277,
+     "lock_hits": 668.0,
+     "rms": 0.09076111074919897
+    },
+    "rtl_x2": {
+     "ok": 24,
+     "n": 24,
+     "slips": 0,
+     "undetected": 0,
+     "unlocks": 0,
+     "late": 0,
+     "hits": 150300,
+     "lock_hits": 668.0,
+     "rms": 0.09076068950784338
+    },
+    "acc_rate": 54933.110119047626
+   },
+   {
+    "f_src": 500000000.0,
+    "p": 0.0001,
+    "jitter": 50.0,
+    "dark": 0.1,
+    "U": 1.0,
+    "ideal": {
+     "ok": 24,
+     "n": 24,
+     "slips": 0,
+     "undetected": 0,
+     "unlocks": 0,
+     "late": 0,
+     "hits": 141972,
+     "lock_hits": 412.0,
+     "rms": 0.09056196556265095
+    },
+    "rtl": {
+     "ok": 24,
+     "n": 24,
+     "slips": 0,
+     "undetected": 0,
+     "unlocks": 0,
+     "late": 0,
+     "hits": 141972,
+     "lock_hits": 412.0,
+     "rms": 0.09056214498897425
+    },
+    "rtl_x2": {
+     "ok": 24,
+     "n": 24,
+     "slips": 0,
+     "undetected": 0,
+     "unlocks": 0,
+     "late": 0,
+     "hits": 141972,
+     "lock_hits": 412.0,
+     "rms": 0.09056218931646653
+    },
+    "acc_rate": 54933.110119047626
+   },
+   {
+    "f_src": 500000000.0,
+    "p": 0.03,
+    "jitter": 150.0,
+    "dark": 0.5,
+    "U": 100.0,
+    "ideal": {
+     "ok": 18,
+     "n": 24,
+     "slips": 0,
+     "undetected": 0,
+     "unlocks": 0,
+     "late": 0,
+     "hits": 673927,
+     "lock_hits": 11366.5,
+     "rms": 0.17695863194180617
+    },
+    "rtl": {
+     "ok": 9,
+     "n": 24,
+     "slips": 0,
+     "undetected": 0,
+     "unlocks": 0,
+     "late": 0,
+     "hits": 1313927,
+     "lock_hits": 27363.0,
+     "rms": 0.1765911594760297
+    },
+    "rtl_x2": {
+     "ok": 2,
+     "n": 24,
+     "slips": 0,
+     "undetected": 0,
+     "unlocks": 0,
+     "late": 0,
+     "hits": 2940877,
+     "lock_hits": 38173.0,
+     "rms": 0.17607779010863184
+    },
+    "acc_rate": 13648069.19642857
+   },
+   {
+    "f_src": 500000000.0,
+    "p": 0.03,
+    "jitter": 150.0,
+    "dark": 0.5,
+    "U": 1.0,
+    "ideal": {
+     "ok": 16,
+     "n": 24,
+     "slips": 0,
+     "undetected": 0,
+     "unlocks": 0,
+     "late": 0,
+     "hits": 594395,
+     "lock_hits": 14488.0,
+     "rms": 0.1774996173233708
+    },
+    "rtl": {
+     "ok": 8,
+     "n": 24,
+     "slips": 0,
+     "undetected": 0,
+     "unlocks": 0,
+     "late": 0,
+     "hits": 1185494,
+     "lock_hits": 25805.0,
+     "rms": 0.1775274585987042
+    },
+    "rtl_x2": {
+     "ok": 0,
+     "n": 24,
+     "slips": 0,
+     "undetected": 0,
+     "unlocks": 0,
+     "late": 0,
+     "hits": 3354756,
+     "lock_hits": NaN,
+     "rms": NaN
+    },
+    "acc_rate": 13648069.19642857
+   },
+   {
+    "f_src": 500000000.0,
+    "p": 0.01,
+    "jitter": 150.0,
+    "dark": 0.5,
+    "U": 100.0,
+    "ideal": {
+     "ok": 16,
+     "n": 24,
+     "slips": 0,
+     "undetected": 0,
+     "unlocks": 0,
+     "late": 0,
+     "hits": 654609,
+     "lock_hits": 13233.0,
+     "rms": 0.17723127863760327
+    },
+    "rtl": {
+     "ok": 9,
+     "n": 24,
+     "slips": 0,
+     "undetected": 0,
+     "unlocks": 0,
+     "late": 0,
+     "hits": 1026164,
+     "lock_hits": 27543.0,
+     "rms": 0.1774609522769779
+    },
+    "rtl_x2": {
+     "ok": 8,
+     "n": 24,
+     "slips": 0,
+     "undetected": 0,
+     "unlocks": 0,
+     "late": 0,
+     "hits": 1662021,
+     "lock_hits": 27561.5,
+     "rms": 0.17761359384923608
+    },
+    "acc_rate": 5776089.285714285
+   },
+   {
+    "f_src": 500000000.0,
+    "p": 0.01,
+    "jitter": 150.0,
+    "dark": 0.5,
+    "U": 1.0,
+    "ideal": {
+     "ok": 7,
+     "n": 24,
+     "slips": 0,
+     "undetected": 0,
+     "unlocks": 0,
+     "late": 0,
+     "hits": 1109176,
+     "lock_hits": 29370.5,
+     "rms": 0.17778216463494312
+    },
+    "rtl": {
+     "ok": 4,
+     "n": 24,
+     "slips": 0,
+     "undetected": 0,
+     "unlocks": 0,
+     "late": 0,
+     "hits": 1480026,
+     "lock_hits": 33675.0,
+     "rms": 0.1775570571518467
+    },
+    "rtl_x2": {
+     "ok": 4,
+     "n": 24,
+     "slips": 0,
+     "undetected": 0,
+     "unlocks": 0,
+     "late": 0,
+     "hits": 1992001,
+     "lock_hits": 47891.5,
+     "rms": 0.17795900014521784
+    },
+    "acc_rate": 5776089.285714285
+   },
+   {
+    "f_src": 500000000.0,
+    "p": 0.001,
+    "jitter": 150.0,
+    "dark": 0.5,
+    "U": 100.0,
+    "ideal": {
+     "ok": 15,
+     "n": 24,
+     "slips": 0,
+     "undetected": 0,
+     "unlocks": 0,
+     "late": 0,
+     "hits": 844239,
+     "lock_hits": 13240.0,
+     "rms": 0.17752924944591028
+    },
+    "rtl": {
+     "ok": 14,
+     "n": 24,
+     "slips": 0,
+     "undetected": 0,
+     "unlocks": 0,
+     "late": 0,
+     "hits": 926562,
+     "lock_hits": 14194.0,
+     "rms": 0.17767226297099023
+    },
+    "rtl_x2": {
+     "ok": 13,
+     "n": 24,
+     "slips": 0,
+     "undetected": 0,
+     "unlocks": 0,
+     "late": 0,
+     "hits": 1040415,
+     "lock_hits": 16781.5,
+     "rms": 0.17773540973397095
+    },
+    "acc_rate": 641930.0223214285
+   },
+   {
+    "f_src": 500000000.0,
+    "p": 0.001,
+    "jitter": 150.0,
+    "dark": 0.5,
+    "U": 1.0,
+    "ideal": {
+     "ok": 13,
+     "n": 24,
+     "slips": 0,
+     "undetected": 0,
+     "unlocks": 0,
+     "late": 0,
+     "hits": 872827,
+     "lock_hits": 16984.5,
+     "rms": 0.1777333161011415
+    },
+    "rtl": {
+     "ok": 13,
+     "n": 24,
+     "slips": 0,
+     "undetected": 0,
+     "unlocks": 0,
+     "late": 0,
+     "hits": 996691,
+     "lock_hits": 16985.0,
+     "rms": 0.17807143949745155
+    },
+    "rtl_x2": {
+     "ok": 13,
+     "n": 24,
+     "slips": 0,
+     "undetected": 0,
+     "unlocks": 0,
+     "late": 0,
+     "hits": 1055338,
+     "lock_hits": 17140.0,
+     "rms": 0.17785467288224563
+    },
+    "acc_rate": 641930.0223214285
+   }
+  ],
+  "hunt": [
+   {
+    "case": "ideal",
+    "f_src": 100000000.0,
+    "jitter": 200.0,
+    "dark": 0.1,
+    "runs": 256,
+    "locked_hits": 5323859,
+    "slips": 0,
+    "undetected": 0,
+    "unlocks": 0,
+    "late": 0
+   },
+   {
+    "case": "rtl",
+    "f_src": 100000000.0,
+    "jitter": 200.0,
+    "dark": 0.1,
+    "runs": 256,
+    "locked_hits": 5323625,
+    "slips": 0,
+    "undetected": 0,
+    "unlocks": 0,
+    "late": 0
+   },
+   {
+    "case": "ideal",
+    "f_src": 100000000.0,
+    "jitter": 500.0,
+    "dark": 0.5,
+    "runs": 256,
+    "locked_hits": 6146606,
+    "slips": 0,
+    "undetected": 0,
+    "unlocks": 0,
+    "late": 0
+   },
+   {
+    "case": "rtl",
+    "f_src": 100000000.0,
+    "jitter": 500.0,
+    "dark": 0.5,
+    "runs": 256,
+    "locked_hits": 6078080,
+    "slips": 0,
+    "undetected": 0,
+    "unlocks": 0,
+    "late": 0
+   },
+   {
+    "case": "ideal",
+    "f_src": 500000000.0,
+    "jitter": 50.0,
+    "dark": 0.1,
+    "runs": 192,
+    "locked_hits": 3645942,
+    "slips": 0,
+    "undetected": 0,
+    "unlocks": 0,
+    "late": 0
+   },
+   {
+    "case": "rtl",
+    "f_src": 500000000.0,
+    "jitter": 50.0,
+    "dark": 0.1,
+    "runs": 192,
+    "locked_hits": 3645827,
+    "slips": 0,
+    "undetected": 0,
+    "unlocks": 0,
+    "late": 0
+   }
+  ]
+ }
 }

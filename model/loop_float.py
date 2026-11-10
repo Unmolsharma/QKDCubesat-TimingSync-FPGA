@@ -127,6 +127,7 @@ keep the e^2 average low and break up the consecutive-reject run.
 """
 
 import argparse
+import heapq
 import json
 import math
 import os
@@ -137,6 +138,7 @@ from pathlib import Path
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import loop_fixed as lfx  # noqa: E402
 from hitgen import T_CLK_PS, StreamCfg, generate  # noqa: E402
 
 
@@ -160,6 +162,17 @@ class LoopCfg:
     slip_shift: int = 5         # signed-error average weight 2^-5 (all hits, while locked)
     slip_thr: float = 1 / 8
     slip_unlock: bool = True    # a suspected slip forces an unlock
+    # RTL transport delay, in clocks after the pop (all 0 = the ideal loop; see DelayedLoop)
+    dp_lat: int = 0             # phase correction reaches the accumulator
+    df_lat: int = 0             # frequency correction reaches the accumulator
+    pop_gap: int = 0            # minimum cycles between pops from the align FIFO
+    j_max: int | None = None    # a hit popped later than this after its edge is dropped
+
+
+def rtl_latency(scale=1):
+    """The LoopCfg fields of the 250 MHz pipeline; scale > 1 is a margin test."""
+    return dict(dp_lat=scale * lfx.DP_LAT, df_lat=scale * (lfx.DF_LAT + lfx.FCLK_LAT),
+                pop_gap=lfx.FixedCfg.POP_GAP, j_max=lfx.FixedCfg.J_MAX)
 
 
 def round_log2(x: float) -> int:
@@ -225,21 +238,35 @@ class FloatLoop:
         self.mse = 1 / 12
         self.rej_run = 0
 
+    def _measure(self, t):
+        """NCO phase this hit sees, or None if the hit is dropped."""
+        return self.phase_at(t)
+
+    def _rebase(self, t, phi):
+        self.phi, self.t_ref = phi, t
+
+    def _correct(self, dphi, df):
+        self.phi += dphi
+        self.f += df
+
     def step(self, t):
         c = self.c
         L = c.tau_ovr if c.tau_ovr is not None else self.L
+        phi = self._measure(t)
+        if phi is None:                                      # dropped: the loop never sees it
+            phi = self.phase_at(t)
+            slot = math.floor(phi + 0.5)
+            return slot, phi - slot, True, self.state == LOCK
         if (self.state != ACQ and self.t_last is not None
                 and (t - self.t_last) > 2 ** (L + c.to_shift) * T_CLK_PS):
             self._to_acq()                                   # no-hit timeout
-        phi = self.phase_at(t)
         slot = math.floor(phi + 0.5)
         e = phi - slot
         noise = self.state != ACQ and c.gate_en and abs(e) >= c.gate
         kp = self.kp
-        self.phi, self.t_ref = phi, t
+        self._rebase(t, phi)
         if not noise:
-            self.phi -= e * 2.0 ** -kp
-            self.f -= e * 2.0 ** -(2 * kp + 1) / (2.0 ** L * 4096.0)
+            self._correct(-e * 2.0 ** -kp, -e * 2.0 ** -(2 * kp + 1) / (2.0 ** L * 4096.0))
             # hit-spacing estimate (loop-updating hits only)
             if self.t_prev_upd is not None:
                 d = (t - self.t_prev_upd) / T_CLK_PS
@@ -285,6 +312,73 @@ class FloatLoop:
         return slot, e, noise, self.state == LOCK
 
 
+class DelayedLoop(FloatLoop):
+    """FloatLoop with the transport delay of the pipelined RTL.
+
+    A hit is popped at edge n = max(c, n_prev + pop_gap), c being the first clock
+    edge after it. It reads the NCO as of edge n and interpolates back to its own
+    time with the frequency visible at n, as nco_phase_det does. Its corrections
+    take effect at edges n + dp_lat (phase) and n + df_lat (frequency), so hits
+    closer together than that act on stale state: real extra loop delay. The
+    interpolation frequency updates earlier than the accumulator's (fps before
+    fclk). A hit popped more than j_max cycles after c is dropped, unseen by the loop.
+
+    The one thing left out is the 16-entry FIFO filling up: under sustained overload
+    this model drops every hit past j_max instead."""
+
+    def __init__(self, cfg, f0_ps=None, phi0=0.0):
+        super().__init__(cfg, f0_ps, phi0)
+        self.f_vis = self.f                # frequency the interpolation sees (fps)
+        self.pending = []                  # heap of (edge time, dphi, df, df_vis)
+        self.n_prev = None
+        self.n_pop = 0
+        self.late_cnt = 0
+
+    def _apply_until(self, t):
+        while self.pending and self.pending[0][0] <= t:
+            at, dphi, df, df_vis = heapq.heappop(self.pending)
+            self.phi += self.f * (at - self.t_ref) + dphi
+            self.t_ref = at
+            self.f += df
+            self.f_vis += df_vis
+
+    def phase_at(self, t):
+        phi, t_ref, f = self.phi, self.t_ref, self.f
+        for at, dphi, df, _ in sorted(self.pending):
+            if at > t:
+                break
+            phi += f * (at - t_ref) + dphi
+            t_ref = at
+            f += df
+        return phi + f * (t - t_ref)
+
+    def _measure(self, t):
+        c = math.ceil(t / T_CLK_PS)
+        n = c if self.n_prev is None else max(c, self.n_prev + self.c.pop_gap)
+        self.n_prev = n
+        if self.c.j_max is not None and n - c > self.c.j_max:
+            self.late_cnt += 1
+            return None
+        self.n_pop = n
+        edge = n * T_CLK_PS
+        self._apply_until(edge)
+        return self.phi + self.f * (edge - self.t_ref) - (edge - t) * self.f_vis
+
+    def _rebase(self, t, phi):
+        pass                               # the accumulator runs on regardless of hits
+
+    def _correct(self, dphi, df):
+        n, c = self.n_pop, self.c
+        heapq.heappush(self.pending, ((n + c.dp_lat) * T_CLK_PS, dphi, 0.0, 0.0))
+        heapq.heappush(self.pending, ((n + c.df_lat) * T_CLK_PS, 0.0, df, 0.0))
+        heapq.heappush(self.pending, ((n + c.df_lat - lfx.FCLK_LAT) * T_CLK_PS, 0.0, 0.0, df))
+
+
+def new_loop(cfg, f0_ps=None, phi0=0.0):
+    delayed = cfg.dp_lat or cfg.df_lat or cfg.pop_gap or cfg.j_max is not None
+    return (DelayedLoop if delayed else FloatLoop)(cfg, f0_ps, phi0)
+
+
 # -----------------------------------------------------------------------------
 # One run: stream -> loop -> per-hit trace + truth comparison
 # -----------------------------------------------------------------------------
@@ -303,10 +397,10 @@ def run(scfg: StreamCfg, lcfg: LoopCfg, start_locked=False, stop_after_verify=No
     t, slot_true, t_true = s["t_ps"], s["slot"], s["t_true"]
     f_src_ps = scfg.f_src_hz * 1e-12 * (1 + scfg.ppm * 1e-6)
     if start_locked:
-        lp = FloatLoop(lcfg, f0_ps=f_src_ps, phi0=-s["t_off"] * f_src_ps)
+        lp = new_loop(lcfg, f0_ps=f_src_ps, phi0=-s["t_off"] * f_src_ps)
         lp.set_locked()
     else:
-        lp = FloatLoop(lcfg)
+        lp = new_loop(lcfg)
     n = len(t)
     rec = dict(t=np.empty(n), e=np.empty(n), noise=np.zeros(n, bool), locked=np.zeros(n, bool),
                slot=np.zeros(n, np.int64), f_ppm=np.empty(n), nco_err=np.full(n, np.nan),
@@ -403,6 +497,95 @@ def _hunt_trial(args):
     a = assess(rec, li, ppm)
     return dict(locked_hits=int(rec["locked"].sum()), undetected=a["undetected_slips"],
                 unlocks=a["unlocks"], suspects=lp.suspect_cnt)
+
+
+def _latency_cfg(name):
+    return {"ideal": {}, "rtl": rtl_latency(), "rtl_x2": rtl_latency(2)}[name]
+
+
+def _latency_trial(args):
+    """One trial: acquire from the worst/random offset, then verify 5000 signal hits."""
+    name, f_src, p, U, jitter, dark, trial = args
+    rng = np.random.default_rng(31_000 * trial + 11)
+    ppm = [U, -U][trial] if trial < 2 else rng.uniform(-U, U)
+    rate = p * f_src
+    n_lock_max, n_verify = 20000, 5000
+    scfg = StreamCfg(f_src_hz=f_src, ppm=ppm, p_det=p, jitter_ps=jitter, dark_hz=dark * rate,
+                     duration_s=(n_lock_max + 3 * n_verify) / rate * 4,
+                     seed=trial * 6151 + int(-math.log10(p) * 100))
+    rec, s, lp, lock_i = run(scfg, replace(LoopCfg(f_nom_hz=f_src), **_latency_cfg(name)),
+                             stop_after_verify=n_verify)
+    a = assess(rec, lock_i, ppm)
+    ok = bool(a["locked"] and lock_i < n_lock_max and a["slips"] == 0 and a["unlocks"] == 0
+              and abs(a["f_err_ppm"]) < 5.0 and rec["locked"][-1])
+    return dict(case=name, f_src=f_src, p=p, U=U, jitter=jitter, dark=dark, ok=ok,
+                lock_hits=a.get("lock_hits"), slips=a.get("slips") or 0,
+                undetected=a.get("undetected_slips") or 0, unlocks=a.get("unlocks") or 0,
+                acc_rate=s["accepted"] / s["duration_s"],
+                late=getattr(lp, "late_cnt", 0), hits=len(rec["t"]),
+                rms=float(np.std(rec["e"][lock_i:])) if lock_i is not None else None)
+
+
+def _latency_hunt_trial(args):
+    name, f_src, p, U, jitter, dark, k = args
+    rng = np.random.default_rng(91_000 + k)
+    ppm = rng.uniform(-U, U)
+    rate = p * f_src
+    scfg = StreamCfg(f_src_hz=f_src, ppm=ppm, p_det=p, jitter_ps=jitter, dark_hz=dark * rate,
+                     duration_s=20000 / rate, seed=7000 + k)
+    rec, s, lp, li = run(scfg, replace(LoopCfg(f_nom_hz=f_src), **_latency_cfg(name)))
+    if li is None:
+        return dict(locked_hits=0, slips=0, undetected=0, unlocks=0, late=getattr(lp, "late_cnt", 0))
+    a = assess(rec, li, ppm)
+    return dict(locked_hits=int(rec["locked"].sum()), slips=a["slips"], undetected=a["undetected_slips"],
+                unlocks=a["unlocks"], late=getattr(lp, "late_cnt", 0))
+
+
+def latency_check(trials=24, hunt_trials=32, procs=None):
+    """Does the 250 MHz pipeline's delay hurt? Same seeds with no delay, the RTL's
+    delay and twice the RTL's delay, concentrated on the high rates where a hit
+    arrives before the previous correction has landed."""
+    from multiprocessing import Pool
+    grid = [(100e6, p, 200.0, 0.1) for p in (0.5, 0.3, 0.1, 3e-2, 1e-2, 1e-3, 1e-4)]
+    grid += [(100e6, p, 500.0, 0.5) for p in (0.3, 0.1, 1e-2, 1e-3, 1e-4)]
+    grid += [(500e6, p, 50.0, 0.1) for p in (0.1, 0.03, 0.01, 1e-3, 1e-4)]
+    grid += [(500e6, p, 150.0, 0.5) for p in (0.03, 0.01, 1e-3)]
+    cases = ["ideal", "rtl", "rtl_x2"]
+    jobs = [(c, f, p, U, j, d, k) for f, p, j, d in grid for U in (100.0, 1.0)
+            for c in cases for k in range(trials)]
+    with Pool(procs or os.cpu_count()) as pool:
+        res = pool.map(_latency_trial, jobs, chunksize=4)
+    rows = []
+    for f, p, j, d in grid:
+        for U in (100.0, 1.0):
+            row = dict(f_src=f, p=p, jitter=j, dark=d, U=U)
+            for c in cases:
+                r = [x for x in res if (x["case"], x["f_src"], x["p"], x["U"], x["jitter"]) == (c, f, p, U, j)]
+                row[c] = dict(ok=sum(x["ok"] for x in r), n=len(r), slips=sum(x["slips"] for x in r),
+                              undetected=sum(x["undetected"] for x in r),
+                              unlocks=sum(x["unlocks"] for x in r),
+                              late=sum(x["late"] for x in r), hits=sum(x["hits"] for x in r),
+                              lock_hits=float(np.median([x["lock_hits"] for x in r if x["lock_hits"]] or [np.nan])),
+                              rms=float(np.mean([x["rms"] for x in r if x["rms"] is not None] or [np.nan])))
+            row["acc_rate"] = float(np.mean([x["acc_rate"] for x in res if x["p"] == p and x["f_src"] == f]))
+            rows.append(row)
+            cell = "  ".join(f"{c}: {row[c]['ok']}/{row[c]['n']} sl {row[c]['slips']} un {row[c]['undetected']} "
+                             f"ul {row[c]['unlocks']} late {row[c]['late']} hits {row[c]['lock_hits']:.0f}" for c in cases)
+            print(f"f={f/1e6:.0f}M p={p:<7g} jit={j:g} dark={d:g} U={U:g} acc={row['acc_rate']:.3g}/s  {cell}", flush=True)
+
+    hunt = []
+    for f, ps, j, d in ((100e6, (0.1, 1e-2, 1e-3, 1e-4), 200.0, 0.1), (100e6, (0.1, 1e-2, 1e-3, 1e-4), 500.0, 0.5),
+                        (500e6, (0.03, 1e-2, 1e-3), 50.0, 0.1)):
+        for c in ("ideal", "rtl"):
+            jobs = [(c, f, p, U, j, d, k) for p in ps for U in (100.0, 1.0) for k in range(hunt_trials)]
+            with Pool(procs or os.cpu_count()) as pool:
+                r = pool.map(_latency_hunt_trial, jobs, chunksize=1)
+            hunt.append(dict(case=c, f_src=f, jitter=j, dark=d, runs=len(r),
+                             locked_hits=sum(x["locked_hits"] for x in r), slips=sum(x["slips"] for x in r),
+                             undetected=sum(x["undetected"] for x in r), unlocks=sum(x["unlocks"] for x in r),
+                             late=sum(x["late"] for x in r)))
+            print("latency hunt:", hunt[-1], flush=True)
+    return dict(delay=rtl_latency(), rows=rows, hunt=hunt)
 
 
 def slip_hunt(trials=64, procs=None):
@@ -634,7 +817,7 @@ def main(argv=None):
     ap.add_argument("--outdir", default=str(Path(__file__).resolve().parents[1] / "docs" / "img"))
     ap.add_argument("--trials", type=int, default=24)
     ap.add_argument("--quick", action="store_true")
-    ap.add_argument("--only", choices=["lock", "ramp", "trace", "hunt"], action="append")
+    ap.add_argument("--only", choices=["lock", "ramp", "trace", "hunt", "latency"], action="append")
     args = ap.parse_args(argv)
     out = Path(args.outdir)
     out.mkdir(parents=True, exist_ok=True)
@@ -698,6 +881,9 @@ def main(argv=None):
 
     if "hunt" in only:
         results["slip_hunt"] = slip_hunt(16 if args.quick else 64)
+
+    if "latency" in only:
+        results["latency_check"] = latency_check(6 if args.quick else 24, 8 if args.quick else 32)
 
     jpath.write_text(json.dumps(results, indent=1))
     print("wrote", jpath)

@@ -20,6 +20,7 @@
 #   build/open/<top>/<top>_PRELIMINARY.bit     only if the chain checks pass
 #   build/open/<top>/reports/summary.txt       start here
 #   build/open/<top>/reports/constraints.rpt   every XDC line and what became of it
+#   build/open/<top>/reports/sta.rpt           setup slack per register group (scripts/open_sta.py)
 #   build/open/<top>/reports/chain_placement.rpt, yosys.log, nextpnr.log, nextpnr.json
 #
 # Exit status: 0 = bitstream written; non-zero = no bitstream.
@@ -52,6 +53,8 @@ esac
 if [ "${OPEN_NATIVE:-0}" != 1 ] && [ "${OPEN_IN_CONTAINER:-0}" != 1 ]; then
     command -v docker >/dev/null || {
         echo "docker not found. See docs/OPEN_BUILD.md, or set OPEN_NATIVE=1." >&2; exit 1; }
+    # WSL may have only just started, with the Docker daemon still coming up.
+    for _ in $(seq 30); do docker info >/dev/null 2>&1 && break; sleep 2; done
     if ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
         echo "== building $IMAGE (first use, several minutes)"
         docker build -t "$IMAGE" -f "$ROOT/docker/openxc7.Dockerfile" "$ROOT/docker"
@@ -121,7 +124,7 @@ yosys -q -l "$RPT/yosys.log" -s "$OUT/synth.ys" >/dev/null 2>&1 || {
 echo "== nextpnr-xilinx"
 nextpnr-xilinx --chipdb "$CHIPDB" --xdc "$OUT/$TOP.xdc" --json "$OUT/$TOP.placed.json" \
     --write "$OUT/$TOP.routed.json" --fasm "$OUT/$TOP.fasm" --report "$RPT/nextpnr.json" \
-    --seed "$SEED" --timing-allow-fail -q -l "$RPT/nextpnr.log" >/dev/null 2>&1 || {
+    --sdf "$OUT/$TOP.sdf" --seed "$SEED" --timing-allow-fail -q -l "$RPT/nextpnr.log" >/dev/null 2>&1 || {
     grep -E '^ERROR' "$RPT/nextpnr.log" >&2 || tail -n 5 "$RPT/nextpnr.log" >&2
     echo "nextpnr-xilinx failed, no bitstream: see $RPT/nextpnr.log" >&2; exit 1; }
 
@@ -139,6 +142,10 @@ echo "== bitstream"
 fasm2frames --part "$PART" --db-root "$PRJXRAY_DB" "$OUT/$TOP.fasm" > "$OUT/$TOP.frames" 2>"$RPT/fasm2frames.log"
 xc7frames2bit --part_file "$PRJXRAY_DB/$PART/part.yaml" --part_name "$PART" \
     --frm_file "$OUT/$TOP.frames" --output_file "$OUT/${TOP}_PRELIMINARY.bit"
+
+# ---- 6. per-endpoint timing: nextpnr reports only one path per clock ----
+python3 "$ROOT/scripts/open_sta.py" "$OUT/$TOP.sdf" "$OUT/$TOP.routed.json" "$OUT/$TOP.xdc" \
+    --out "$RPT/sta.rpt" >/dev/null
 
 echo "== done (PRELIMINARY: open-source flow, not Vivado, not measured on hardware)"
 echo "   $OUT/${TOP}_PRELIMINARY.bit"

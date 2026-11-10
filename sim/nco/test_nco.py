@@ -174,7 +174,7 @@ async def test_gap_reacquire(dut):
 
 @cocotb.test()
 async def test_coincident_and_late(dut):
-    """Hits with the same coarse time (as from two channels) are released 2
+    """Hits with the same coarse time (as from two channels) are released POP_GAP
     cycles apart with fine' = fine + j*T, exactly. Hits delivered more than
     J_MAX cycles after their NCO time are dropped and counted as late."""
     from nco_tb import LAT
@@ -188,7 +188,7 @@ async def test_coincident_and_late(dut):
             await tb.drive(c0 + 50 * k, 1000 + 37 * k, lat=LAT)
     n_late = 5
     for k in range(n_late):                     # delivered after t_nco > c + J_MAX
-        await tb.drive(c0 + 1000 + 100 * k, 2000, lat=16 + 12 + 5)
+        await tb.drive(c0 + 1000 + 100 * k, 2000, lat=tb.cfg.D + tb.cfg.J_MAX + 5)
     m = await tb.check_model("coincident_late")
     assert m.cnt["late"] == n_late, m.cnt
     RESULTS["coincident_late"] = dict(late=m.cnt["late"], hits=len(tb.outs))

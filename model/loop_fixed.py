@@ -25,21 +25,26 @@ operand fps >> 22, and P -> 24 fraction bits before the slot decision
 
 TIMING (cycle n = the value of the NCO time counter t_nco, which runs D
 clocks behind the TDC coarse counter so every hit arrives before the NCO
-reaches it)
+reaches it). Sized for 250 MHz: no carry chain wider than ~24 bits in a cycle.
   a  hit written into the align FIFO at the edge that ends cycle a
-  n  hit popped: n = max(c, a + 1, n_prev + POP_GAP); j = n - c.
+  n  hit popped: n = max(c, a + ALIGN_LAT, n_prev + POP_GAP); j = n - c.
      j > J_MAX -> LATE (dropped and counted, no output). Otherwise the hit
      sees P[n], fps[n] and uses fine' = fine_ps + j * T_CLK_PS, which is
      exact: t_hit = c*T - fine = n*T - (fine + j*T).
-  n+1 multiply (DSP), n+2 subtract, n+3 slot/e/e^2, n+4 = E stage (gate,
-  loop filter, averages), n+5 = F stage (state machine, counters, output)
-  n+6 loop corrections visible: P[n+6] includes dphi, fps[n+6] includes df,
-     fclk[n+7] = (fps[n+6] * 4000) >> 16.
-  POP_GAP = 2 guarantees hit k+1's E stage runs after hit k's F stage, so
-  every hit sees the state left by the previous one (no pipeline hazard).
-  No-hit timeout is checked every cycle the E/F stages are idle; before hit
-  k's E stage it has fired iff (E_k - 1) - c_last > 2^(L + to_shift).
-  External correction strobe in cycle X: P[X+1] += dphase, fps[X+1] += dfreq.
+  n+E_LAT = E stage (gate, loop filter sample kp and L, reject run)
+  n+F_LAT = F stage (state machine, counters, output)
+  n+DF_LAT  frequency correction visible: fps[n+DF_LAT] includes df
+  n+DP_LAT  phase correction visible:     P[n+DP_LAT] includes dphi
+  fclk[X+FCLK_LAT] = (fps[X] * 4000) >> 16 and P[t+1] = P[t] + fclk[t].
+  POP_GAP = 8 guarantees hit k+1's E stage runs after every state update of hit
+  k (they finish at F + 1 = E + 7), so every hit sees the state left by the
+  previous one (no pipeline hazard). The per-hit arithmetic is exactly that of
+  the unpipelined loop; only the cycles above moved. A correction can still be on
+  its way when the next hit samples P and fps: real extra loop delay at high rates.
+  No-hit timeout: cycle X acts on (X - TO_LAT) - c_last > 2^(L + to_shift). It
+  can act from F_prev + TO_LAT + 1 up to E - 1 (blocked while a hit is in E..F+3).
+  External correction strobe in cycle X: P[X+EXT_DP_LAT] += dphase,
+  fps[X+EXT_DF_LAT] += dfreq.
 """
 
 from dataclasses import dataclass, field
@@ -53,6 +58,13 @@ MUL_SHIFT = 22                           # fps >> 22 -> 2^-34 slot/ps, 25-bit si
 E_FRAC = 24
 MSE_INIT = (1 << 32) // 12               # 1/12: what random phase gives
 ACQ, RAMP, LOCK = 0, 1, 2
+# Pipeline latencies in cycles (see TIMING above and rtl/nco/nco_top.v)
+ALIGN_LAT = 6            # FIFO write -> earliest pop
+E_LAT, F_LAT = 7, 13     # pop -> E stage, pop -> F stage
+DP_LAT, DF_LAT = 18, 15  # pop -> correction visible in P, in fps
+EXT_DP_LAT, EXT_DF_LAT = 7, 4
+FCLK_LAT = 7             # fps -> fclk
+TO_LAT = 3               # no-hit timeout check
 
 
 def rhu(x: int, s: int) -> int:
@@ -88,9 +100,9 @@ class FixedCfg:
     # build parameters
     fps_nom: int = fps_from_hz(100e6)
     t_slot_ps: int = 10000          # nominal slot period, for residual_ps only
-    D: int = 16                     # NCO time lag behind the TDC coarse counter
-    J_MAX: int = 12                 # max cycles a hit may be popped after its edge
-    POP_GAP: int = 2
+    D: int = 20                     # NCO time lag behind the TDC coarse counter
+    J_MAX: int = 24                 # max cycles a hit may be popped after its edge
+    POP_GAP: int = 8
     tau_init_log2: int = 16
     # runtime registers (defaults = reset values)
     kp_acq: int = 2
@@ -134,6 +146,8 @@ class FixedNCO:
         self.fps = cfg.fps_nom
         self.fclk = fclk_of(cfg.fps_nom)
         self.ev = {}                       # cycle -> [dP, dF] applied on entry to that cycle
+        self.fclk_ev = {}                  # cycle -> new fclk
+        self.F_last = None                 # F-stage cycle of the previous hit
         # control state
         self.state = ACQ
         self.kp, self.gear_cnt, self.gear_done = cfg.kp_acq, 0, False
@@ -158,32 +172,25 @@ class FixedNCO:
         """Move the NCO registers to cycle n (monotonic)."""
         assert n >= self.n
         while self.n < n:
-            nxt = min([k for k in self.ev if k > self.n] + [n])
-            # cycles self.n .. nxt-1 have constant fclk unless an fps change
-            # at cycle self.n changes fclk at self.n+1: handle that by
-            # stepping one cycle at a time around events.
-            steps = nxt - self.n
-            if self._fclk_pending is not None:
-                steps = 1
-            self.P = (self.P + self.fclk * steps) & PH_MASK
-            self.n += steps
-            if self._fclk_pending is not None:
-                self.fclk = self._fclk_pending
-                self._fclk_pending = None
+            pending = [k for k in list(self.ev) + list(self.fclk_ev) if k > self.n]
+            nxt = min(pending + [n])
+            self.P = (self.P + self.fclk * (nxt - self.n)) & PH_MASK
+            self.n = nxt
             if self.n in self.ev:
                 dP, dF = self.ev.pop(self.n)
                 self.P = (self.P + dP) & PH_MASK
                 if dF:
                     self.fps += dF
-                    self._fclk_pending = fclk_of(self.fps)   # fclk[X+1] = f(fps[X])
+                    self.fclk_ev[self.n + FCLK_LAT] = fclk_of(self.fps)
+            if self.n in self.fclk_ev:
+                self.fclk = self.fclk_ev.pop(self.n)
         return self.P, self.fps
-
-    _fclk_pending = None
 
     def ext_correction(self, X, dphase, dfreq):
         """External correction strobe during cycle X (must be issued in time order
         relative to hits processed afterwards)."""
-        self._add_event(X + 1, dphase, dfreq)
+        self._add_event(X + EXT_DP_LAT, dphase, 0)
+        self._add_event(X + EXT_DF_LAT, 0, dfreq)
 
     # ---------------- per-hit processing ----------------
     def L_cur(self):
@@ -192,6 +199,15 @@ class FixedNCO:
         if not self.tavg_valid:
             return self.c.tau_init_log2
         return min(round_log2(self.tavg >> 4), L_MAX)
+
+    def _timeout_check(self, X):
+        """Has the no-hit timeout fired by cycle X (the last cycle it could act)?"""
+        if self.state == ACQ or not self.last_valid:
+            return
+        if self.F_last is not None and X < self.F_last + TO_LAT + 1:
+            return                         # blocked since the previous hit's E stage
+        if (X - TO_LAT) - self.c_last > (1 << (self.L_cur() + self.c.to_shift)):
+            self._to_acq()
 
     def _to_acq(self):
         if self.state == LOCK:
@@ -205,7 +221,7 @@ class FixedNCO:
 
     def process(self, h: Hit):
         cfg = self.c
-        n = max(h.c, h.a + 1)
+        n = max(h.c, h.a + ALIGN_LAT)
         if self.n_prev_pop is not None:
             n = max(n, self.n_prev_pop + cfg.POP_GAP)
         self.n_prev_pop = n
@@ -213,12 +229,9 @@ class FixedNCO:
         if j > cfg.J_MAX:
             self.cnt["late"] = sat(self.cnt["late"] + 1, 16)
             return dict(late=True, n=n, c=h.c, tag=h.tag)
-        E = n + 4
-        # --- no-hit timeout (per-cycle check while E/F idle) ---
-        if self.state != ACQ and self.last_valid:
-            to = 1 << (self.L_cur() + cfg.to_shift)
-            if (E - 1) - self.c_last > to:
-                self._to_acq()
+        E = n + E_LAT
+        # --- no-hit timeout (per-cycle check while no hit is in E..F+3) ---
+        self._timeout_check(E - 1)
         # --- stage A..D: phase detector ---
         P, fps = self.advance(n)
         fine2 = h.fine + j * T_CLK_PS
@@ -244,7 +257,8 @@ class FixedNCO:
         if not noise:
             dphi = (-e24) << (PH_FRAC - E_FRAC - kp)
             df = rhu((-e24) << 32, 2 * kp + 1 + L + 12)
-            self._add_event(n + 6, dphi, df)
+            self._add_event(n + DP_LAT, dphi, 0)
+            self._add_event(n + DF_LAT, 0, df)
             if self.prev_valid:
                 d = sat((h.c - self.c_prev) & ((1 << 48) - 1), 32)
                 if not self.tavg_valid:
@@ -290,17 +304,16 @@ class FixedNCO:
                     self._to_acq()
             elif not self.slip_armed and abs(self.sgn) < (cfg.slip_thr << 7):
                 self.slip_armed = True
-        self.c_last, self.last_valid = h.c, True
+        self.c_last, self.last_valid, self.F_last = h.c, True, n + F_LAT
         self.cnt["hits"] = sat(self.cnt["hits"] + 1, 16)
         return dict(late=False, n=n, c=h.c, j=j, tag=h.tag, slot=slot, e24=e24, resid=resid,
-                    noise=bool(noise), locked=self.state == LOCK, state=self.state, kp=self.kp)
+                    noise=bool(noise), locked=self.state == LOCK, state=self.state, kp=self.kp,
+                    mse=self.mse, sgn=self.sgn)
 
     def finish(self, N):
         """Account for a no-hit timeout that fires after the last hit, as seen
         by a register read in cycle N (the check runs in every idle cycle)."""
-        if self.state != ACQ and self.last_valid:
-            if (N - 1) - self.c_last > (1 << (self.L_cur() + self.c.to_shift)):
-                self._to_acq()
+        self._timeout_check(N - 1)
 
     def registers_at(self, n):
         """NCO P, fps, fclk at cycle n (after all hits up to now)."""
@@ -316,7 +329,7 @@ def run_hits(cfg: FixedCfg, n0, P0, hits, ext=()):
     out = []
     for h in hits:
         # corrections issued before this hit's pop cycle are registered first
-        n_est = max(h.c, h.a + 1, (m.n_prev_pop + cfg.POP_GAP) if m.n_prev_pop is not None else 0)
+        n_est = max(h.c, h.a + ALIGN_LAT, (m.n_prev_pop + cfg.POP_GAP) if m.n_prev_pop is not None else 0)
         while ext and ext[0][0] < n_est:
             m.ext_correction(*ext.pop(0))
         out.append(m.process(h))

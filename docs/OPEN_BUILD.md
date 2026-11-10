@@ -22,20 +22,26 @@ Seed 1, ideal LUT, Yosys 0.68, nextpnr-xilinx 0.9.8. **PRELIMINARY, tool estimat
 | Chain placement (240 cells, `SLICE_X12Y50..Y97`) | PASS | PASS |
 | I/O pins and standards | PASS (12) | PASS (15) |
 | MMCM in the bitstream source | x10 / 4 = 250 MHz | x10 / 4 = 250 MHz |
-| Worst setup slack at 4 ns | **-2.6 ns** | **-32.9 ns** |
-| Estimated Fmax | ~151 MHz | **~27 MHz** |
-| Slice LUTs / FFs / CARRY4 | 1484 / 1296 / 146 | 5844 / 2881 / 430 |
-| RAMB36 / DSP48 | 1 / 0 | 1 / 6 |
-| Build time on the development laptop | ~1 min | ~5 min (22 min in one run with `lut=`) |
+| Worst setup slack at 4 ns | **-2.6 ns** | **-4.4 ns** |
+| Estimated Fmax | ~151 MHz | **~119 MHz** |
+| Slice LUTs / FFs / CARRY4 | 1484 / 1296 / 146 | 5703 / 4300 / 446 |
+| RAMB36 / DSP48 | 1 / 0 | 1 / 5 |
+| Build time on the development laptop | ~1 min | ~18 min (with other jobs running) |
+
+The `m1_arty_top` column is from the pipelined NCO, built just before a one-line fix to
+the `mse` carry in `nco_lock_det.v`, so a fresh build may differ slightly. The
+`tdc_arty_top` column is from the build before the pipelining; that top contains no NCO.
 
 **Neither top meets 250 MHz in this flow, so neither bitstream should be expected to work
 reliably.** The chain's structure can be right while the logic behind it is too slow.
 
-The M1 miss is worth a look in Vivado but is not a verdict. nextpnr's worst path is
-`u_nco.u_lf` (`tavg` -> `msb` -> `sdf` -> `xr` -> `dfw`): 9.0 ns of logic and 27.9 ns of
-routing. The routing share and the carry delays look pessimistic, and Vivado optimises
-far harder. Even so, the logic alone is over twice the 4 ns period, and the README
-already lists the loop filter's barrel shifter among the main timing risks.
+The M1 miss is worth a look in Vivado but is not a verdict. Pipelining the NCO took the
+estimate from about 27 MHz to about 119 MHz. `reports/sta.rpt` lists slack per register
+group (4318 of 12646 endpoints fail). The worst paths are now control fanout, not
+arithmetic: the NCO's no-hit timeout flag `u_ld.to_flag` driving resets and enables
+of the loop state (-4.4 ns, also `st`, `mse`, `gear_done`), and the top-level `rst`
+driving enables in `u_uart.sr` (-4.2 ns) and the TDC's `ev_coarse` / `cand_coarse`
+(-3.9 ns). The longest logic path is `u_lf.msb` -> `l_rnd`, 10 stages (-3.4 ns).
 
 For `tdc_arty_top`, seeds 2 and 3 gave -3.0 and -3.2 ns, so read these as a range.
 
@@ -62,9 +68,6 @@ Or from PowerShell, in the repo folder: `wsl -d Ubuntu -- bash -lc "bash scripts
 The `-l` matters if Docker came from snap, because that is what puts it on `PATH`.
 
 The first run builds the toolchain image (several minutes, about 6 GB of disk).
-
-If you see `failed to connect to the docker API`, WSL has just started and the daemon is
-still coming up. Wait a few seconds and try again.
 
 ### Option B: Docker Desktop (not tested)
 
