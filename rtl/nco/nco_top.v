@@ -184,7 +184,7 @@ module nco_top #(
     wire f_valid  = st[13];
     wire e_valid  = st[7]  && !sk[7];     // loop updates: fresh hits only
     wire l_commit = st[11] && !sk[11];
-    wire l_clast  = st[12] && !sk[12];
+    wire l_clast  = st[11] && !sk[11];    // F-2: timeout reference (nco_lock_det)
     wire l_f      = st[13] && !sk[13];
     // no timeout decision from a hit's E stage (n+7) until F + 3 (n+16); nco_lock_det
     // uses this two cycles before the decision
@@ -250,7 +250,7 @@ module nco_top #(
         end
 
     nco_lock_det #(.COARSE_W(48)) u_ld (
-        .clk(clk), .rst(rst_ld), .t_lead1(t_d3),
+        .clk(clk), .rst(rst_ld), .t_lead2(t_d2),
         .mse_shift(cfg_mse_shift), .mse_shift_trk(cfg_mse_shift_trk),
         .lock_thr(cfg_lock_thr), .unlock_thr(cfg_unlock_thr), .rej_max(cfg_rej_max),
         .to_shift(cfg_to_shift), .slip_thr(cfg_slip_thr), .slip_unlock(cfg_slip_unlock),

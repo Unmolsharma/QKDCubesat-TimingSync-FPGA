@@ -33,9 +33,11 @@
 //   e^-32 per hit), so at low rates a short signal gap is flywheeled through
 //   instead of dropping lock. Cycle X acts on t_nco[X-3], and the check is blocked
 //   from a hit's E stage until its F stage + 3: model/loop_fixed.py has the same
-//   rule. To get a registered decision without moving that, the arithmetic runs one
-//   cycle ahead on t_lead1 = t_nco + 1, and c_last is taken at F-1 (nothing can look
-//   at it earlier: the check is blocked).
+//   rule. To get a registered decision without moving that, the arithmetic runs two
+//   cycles ahead on t_lead2 = t_nco + 2, in four stages: idle low, idle high, 8
+//   partial ORs of (idle & mask), final OR. mask = ~(2^s - 1) is decoded straight from
+//   L + to_shift. c_last is taken at F-2 (nothing can look at it earlier: the check
+//   is blocked).
 //
 // PIPELINE (E = n+7, F = E+6 = n+13; the next hit's E is at least 8 cycles later)
 //   E      mx low   (sq - mse)
@@ -45,7 +47,9 @@
 //   E+4    ... high: mse committed, visible in E+5
 //   E+5    threshold compares
 //   F      decision: to_acq_f, enter_ramp, locked_next (combinational)
-// The sgn candidates and their threshold flags are ready before F.
+// The sgn candidates and their threshold flags are ready before F: e24 is stable from
+// E-1, so there is room to register slip_thr locally and split each 25-bit compare
+// in two halves over two cycles (sd E, sc E+1, |.| E+2, halves E+3, flag E+4).
 //
 // FANOUT. Leaving ACQ/RAMP/LOCK clears about 60 registers. Only `state` and the
 // output's lock flag need that in the same cycle. Everything else clears from a
@@ -62,7 +66,7 @@ module nco_lock_det #(
 )(
     input  wire               clk,
     input  wire               rst,
-    input  wire [COARSE_W-1:0] t_lead1,        // t_nco + 1
+    input  wire [COARSE_W-1:0] t_lead2,        // t_nco + 2
     // configuration
     input  wire [3:0]         mse_shift,
     input  wire [3:0]         mse_shift_trk,
@@ -79,7 +83,7 @@ module nco_lock_det #(
     input  wire               noise,
     input  wire               st_commit,      // E+4
     input  wire               busy_e,         // two cycles early: hit between E and F + 3
-    input  wire               st_clast,       // F - 1
+    input  wire               st_clast,       // F - 2
     input  wire [COARSE_W-1:0] coarse,        // stable until after F
     // F stage
     input  wire               f_valid,
@@ -138,7 +142,7 @@ module nco_lock_det #(
         end
     end
 
-    // ---- c_last at F-1 (see NO-HIT TIMEOUT) ----
+    // ---- c_last at F-2 (see NO-HIT TIMEOUT) ----
     always @(posedge clk) begin
         if (st_clast) c_last <= coarse;
         if (rst)           last_valid <= 1'b0;
@@ -153,17 +157,28 @@ module nco_lock_det #(
     wire signed [24:0] e_s  = e24 >>> 5;
     reg  signed [25:0] sc = 26'sd0, sn = 26'sd0;
     reg  [24:0]        a_c = 25'd0, a_n = 25'd0;
-    wire [24:0]        thr_hi = {1'b0, slip_thr, 8'd0};
-    wire [24:0]        thr_lo = {2'b0, slip_thr, 7'd0};
+    reg  [24:0]        thr_hi = 25'd0, thr_lo = 25'd0;      // local copies of the setting
     reg                c_gt = 1'b0, c_lt = 1'b0, n_gt = 1'b0, n_lt = 1'b0;
+    // a > t  <=>  a_hi > t_hi || (a_hi == t_hi && a_lo > t_lo), halves of 13 + 12 bits
+    reg  [2:0]         cg = 3'd0, cl = 3'd0, ng = 3'd0, nl = 3'd0;   // {hi >/<, hi ==, lo >/<}
+    function [2:0] cmp_gt;  input [24:0] a, t;
+        cmp_gt = {a[24:12] > t[24:12], a[24:12] == t[24:12], a[11:0] > t[11:0]};
+    endfunction
+    function [2:0] cmp_lt;  input [24:0] a, t;
+        cmp_lt = {a[24:12] < t[24:12], a[24:12] == t[24:12], a[11:0] < t[11:0]};
+    endfunction
     always @(posedge clk) begin
+        thr_hi <= {1'b0, slip_thr, 8'd0};
+        thr_lo <= {2'b0, slip_thr, 7'd0};
         sd  <= sd_w;
         sc  <= sgn + sd_s + $signed({1'b0, sd[4]});
         sn  <= e_s + $signed({1'b0, e24[4]});
         a_c <= sc[24] ? -sc[24:0] : sc[24:0];
         a_n <= sn[24] ? -sn[24:0] : sn[24:0];
-        c_gt <= a_c > thr_hi;   c_lt <= a_c < thr_lo;
-        n_gt <= a_n > thr_hi;   n_lt <= a_n < thr_lo;
+        cg  <= cmp_gt(a_c, thr_hi);   cl <= cmp_lt(a_c, thr_lo);
+        ng  <= cmp_gt(a_n, thr_hi);   nl <= cmp_lt(a_n, thr_lo);
+        c_gt <= cg[2] || (cg[1] && cg[0]);   c_lt <= cl[2] || (cl[1] && cl[0]);
+        n_gt <= ng[2] || (ng[1] && ng[0]);   n_lt <= nl[2] || (nl[1] && nl[0]);
     end
 
     // ---- threshold flags ----
@@ -189,22 +204,28 @@ module nco_lock_det #(
     wire f_slip_exit = suspect && slip_unlock;
 
     // ---- timeout: idle - 1 = t_nco + ~c_last; idle > 2^s <=> (idle - 1) >> s != 0 ----
+    // For a decision acting in cycle X: id_lo X-4, id X-3, partials X-2, tmo_e X-1.
+    localparam integer NP = (COARSE_W + 5) / 6;
     reg  [24:0]         id_lo = 25'd0;
     reg  [COARSE_W-1:0] id = {COARSE_W{1'b0}};
     reg  [COARSE_W-25:0] t_hi = 0, nc_hi = 0;
-    reg  [6:0]          to_s = 7'd0;
-    reg  [COARSE_W:0]   to_thr = {1'b0, {COARSE_W{1'b0}}} + 1'b1;   // 2^s, or 2^COARSE_W: never
+    reg  [COARSE_W-1:0] mask = {COARSE_W{1'b0}};   // bits >= s; all 0 if s >= COARSE_W: never
+    reg  [NP-1:0]       part = {NP{1'b0}};
     reg                 tmo_e = 1'b0;     // cycle X-1: "the idle check says exit in X"
     reg                 timeout = 1'b0;   // cycle X
+    wire [5:0]          to_s = {1'b0, L} + {1'b0, to_shift};
+    wire [6*NP-1:0]     idm = {{(6*NP-COARSE_W){1'b0}}, id & mask};
+    integer k;
     always @(posedge clk) begin
-        id_lo   <= {1'b0, t_lead1[23:0]} + {1'b0, ~c_last[23:0]};
-        t_hi    <= t_lead1[COARSE_W-1:24];
+        id_lo   <= {1'b0, t_lead2[23:0]} + {1'b0, ~c_last[23:0]};
+        t_hi    <= t_lead2[COARSE_W-1:24];
         nc_hi   <= ~c_last[COARSE_W-1:24];
         id      <= {t_hi + nc_hi + id_lo[24], id_lo[23:0]};
-        to_s    <= {2'd0, L} + {2'd0, to_shift};
-        // (idle - 1) >> s != 0  <=>  idle - 1 >= 2^s: one carry chain instead of an AND-OR tree
-        to_thr  <= (to_s >= COARSE_W) ? ({1'b1, {COARSE_W{1'b0}}}) : ({{COARSE_W{1'b0}}, 1'b1} << to_s);
-        tmo_e   <= !busy_e && last_valid && ({1'b0, id} >= to_thr);
+        for (k = 0; k < COARSE_W; k = k + 1)
+            mask[k] <= (to_s <= k);
+        for (k = 0; k < NP; k = k + 1)
+            part[k] <= |idm[6*k +: 6];
+        tmo_e   <= !busy_e && last_valid && (|part);
     end
     // tmo_e cannot be set in a cycle that holds an F stage, so state cannot change
     // between here and X, except by this very timeout (hence !timeout: fire once).

@@ -369,6 +369,15 @@ Reset reaches each block through its own register in a chain (`rtl/top/rst_tree.
 and the taps in `nco_top`). The loop's cycle timing is unchanged and the regression
 is bit-exact. Command writes take two more clocks.
 
+**Slip and timeout compares, off the loop path.** The slip flags compare the
+signed-error average with `slip_thr` from a local register, in two 13/12-bit halves
+over two cycles; e24 is stable from E−1, so the flags are still ready two cycles
+before F. The no-hit timeout runs two cycles ahead on t_nco + 2 in four stages
+(idle low half, high half, eight partial ORs of idle & ~(2^s − 1), final OR), with
+c_last taken at F−2, inside the window where the check is blocked anyway. Both act
+in exactly the same cycles as before: `model/loop_fixed.py` is unchanged and the
+NCO tests are bit-exact, including the timeout unlock in `test_gap_reacquire`.
+
 **Admission: late hits cost nothing, coincidences go out whole.** `nco_align`
 predicts each hit's release cycle n = max(c, a + 9, n_prev + 8) as it arrives, in
 three pipeline stages with 10-bit relative counters (`model/loop_fixed.py`,
