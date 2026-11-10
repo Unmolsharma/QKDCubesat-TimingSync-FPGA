@@ -250,3 +250,36 @@ async def test_backpressure(dut):
     assert drops > 0 and drops + len(tb.outs) == len(outs), (drops, len(tb.outs), len(outs))
     dut._log.info("SIMULATED back-pressure: %d results delivered, %d dropped+counted, "
                   "loop unaffected", len(tb.outs), drops)
+
+
+@cocotb.test()
+async def test_five_channel_merge(dut):
+    """Five merged channels (model/merge_limit.py) replayed into nco_top: at stress
+    rates and with 5-channel coincidences, late drops and every result match the
+    model, and the merge model's own late count agrees with the RTL's."""
+    import merge_limit as ml
+    res = {}
+    first = True
+    for sc in (ml.Scenario("stress", 100e6, 0.2, 1e6, hits=3000),
+               ml.Scenario("coincidences", 100e6, 1e-2, 1e5, burst_hz=1e5, hits=1500)):
+        tb = NcoTB(dut)
+        await tb.start(clock=first)
+        first = False
+        t, ch, slot, dead, _ = ml.make_channels(sc, seed=3)
+        c, fine = hitgen.to_timestamps(t, hitgen.T_CLK_PS)
+        hits, truth, drops, peak, _ = ml.merge(c + 2000, fine, ch, slot, tb.cfg.D, tb.cfg.POP_GAP)
+        shift = val(dut.time_now) + 40 - hits[0].c
+        for h, tr in zip(hits, truth):
+            await tb.drive(h.c + shift, h.fine, truth=tr, tag=h.tag, lat=h.a + tb.cfg.D + 1 - h.c)
+        m = await tb.check_model(f"five_channel_{sc.name}")
+        # the merge model's release rule, on its own arrival cycles
+        expect, n_prev = 0, None
+        for h in hits:
+            n = max(h.c, h.a + 6) if n_prev is None else max(h.c, h.a + 6, n_prev + tb.cfg.POP_GAP)
+            n_prev = n
+            expect += n - h.c > tb.cfg.J_MAX
+        assert m.cnt["late"] == expect, (m.cnt["late"], expect)
+        res[sc.name] = dict(hits=len(hits), late=m.cnt["late"], peak_fifo=peak, ch_fifo_drop=sum(drops))
+        dut._log.info("SIMULATED five channels, %s: %s", sc.name, res[sc.name])
+    RESULTS["five_channel_merge"] = res
+    save_results()

@@ -370,7 +370,30 @@ and the taps in `nco_top`). The loop's cycle timing is unchanged:
 outside the loop did move. The align FIFO's `s_ready` is registered, so 14 of its 16
 entries are usable. Command writes take two more clocks.
 
-Five merged channels at high rates could exceed the cap; that case has not been simulated.
+**Five merged channels against the cap** (`model/merge_limit.py`, SIMULATED).
+4 quantum detectors plus 1 sync channel, each with its own 16.75–20 ns dead time,
+through `tdc_multi_top`'s merger into the NCO, then `loop_fixed.py` itself.
+`test_five_channel_merge` replays two of these streams into the RTL: results and
+late drops match the model bit for bit.
+
+| Scenario (dark counts 10 % of quantum) | offered | NCO-dropped (late) | delivered | lock |
+|---|---|---|---|---|
+| 100 MHz, 100 kcps + 100 kHz sync | 0.21 M/s | 0 | 0.21 M/s | yes, 0 slips |
+| 100 MHz, 1 Mcps + 1 MHz sync | 2.1 M/s | 0 | 2.1 M/s | yes, 0 slips |
+| 500 MHz, 10 Mcps + 1 MHz sync | 12.0 M/s | 0.07 % | 11.5 M/s | yes, 0 slips |
+| 100 MHz, 20 Mcps + 1 MHz sync | 23.0 M/s | 3.1 % | 20.9 M/s | yes, 1 reported unlock, 0 slips |
+| 100 MHz, 30 Mcps + 1 MHz sync | 34.1 M/s | **85 %** | 4.5 M/s | late (hit 45 000), 0 slips |
+| 100 MHz, 50 Mcps + 10 MHz sync | 65 M/s | **≈100 %** | 0.01 M/s | never |
+| 500 MHz, p = 0.5 on every channel + 10 MHz sync | 260 M/s | **≈100 %** | 0.01 M/s | never |
+| 1 Mcps with 100 k/s 5-channel coincidences | 1.7 M/s | 6.6 % | 1.6 M/s | yes, 0 slips |
+
+Realistic QKD rates (kHz to a few MHz) lose nothing. A coincidence on all 5
+channels always loses its 5th hit (released 32 clocks late, past `J_MAX` = 24).
+Above the cap, throughput doesn't level off at 31 Mhit/s: it collapses, because
+a late hit still uses up a POP_GAP release slot, so the queue never catches up.
+In the model, letting a late hit release without a gap fixes that: 28.4 M/s
+delivered (8 % late) at 34 M/s offered, and exactly 31.25 M/s at any higher load,
+with 0 slips. (Not built; it is a one-line change in `nco_align` plus the model.)
 
 ## Block 2 results (SIMULATED)
 
