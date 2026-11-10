@@ -22,28 +22,35 @@ Seed 1, ideal LUT, Yosys 0.68, nextpnr-xilinx 0.9.8. **PRELIMINARY, tool estimat
 | Chain placement (240 cells, `SLICE_X12Y50..Y97`) | PASS | PASS |
 | I/O pins and standards | PASS (12) | PASS (15) |
 | MMCM in the bitstream source | x10 / 4 = 250 MHz | x10 / 4 = 250 MHz |
-| Worst setup slack at 4 ns | **-2.6 ns** | **-4.4 ns** |
-| Estimated Fmax | ~151 MHz | **~119 MHz** |
-| Slice LUTs / FFs / CARRY4 | 1484 / 1296 / 146 | 5703 / 4300 / 446 |
+| Worst setup slack at 4 ns | **-1.7 ns** | **-3.6 ns** |
+| Estimated Fmax | ~174 MHz | **~132 MHz** |
+| Slice LUTs / FFs / CARRY4 | 1488 / 1302 / 146 | 5710 / 4357 / 453 |
 | RAMB36 / DSP48 | 1 / 0 | 1 / 5 |
-| Build time on the development laptop | ~1 min | ~18 min (with other jobs running) |
+| Build time on the development laptop | ~4 min | ~17 min (with the regression running) |
 
-The `m1_arty_top` column is from the pipelined NCO, built just before a one-line fix to
-the `mse` carry in `nco_lock_det.v`, so a fresh build may differ slightly. The
-`tdc_arty_top` column is from the build before the pipelining; that top contains no NCO.
+Both columns are from the same commit: the pipelined NCO with the fanout and reset-tree
+changes (registered clears, early timeout decision, `rst_tree.v`). `clk_src` in M1 passes
+at 100 MHz (245.6 MHz estimated).
 
 **Neither top meets 250 MHz in this flow, so neither bitstream should be expected to work
 reliably.** The chain's structure can be right while the logic behind it is too slow.
 
-The M1 miss is worth a look in Vivado but is not a verdict. Pipelining the NCO took the
-estimate from about 27 MHz to about 119 MHz. `reports/sta.rpt` lists slack per register
-group (4318 of 12646 endpoints fail). The worst paths are now control fanout, not
-arithmetic: the NCO's no-hit timeout flag `u_ld.to_flag` driving resets and enables
-of the loop state (-4.4 ns, also `st`, `mse`, `gear_done`), and the top-level `rst`
-driving enables in `u_uart.sr` (-4.2 ns) and the TDC's `ev_coarse` / `cand_coarse`
-(-3.9 ns). The longest logic path is `u_lf.msb` -> `l_rnd`, 10 stages (-3.4 ns).
+History of the M1 estimate: about 27 MHz unpipelined, about 119 MHz pipelined, about
+132 MHz with the fanout fixes (`reports/sta.rpt`: 1828 of 12954 endpoints fail, was
+4318 of 12646). The timeout flag and reset nets no longer appear in the worst groups.
+What is left:
 
-For `tdc_arty_top`, seeds 2 and 3 gave -3.0 and -3.2 ns, so read these as a range.
+* TDC popcount encoder `u_fe.u_enc.s1 -> s2`, 7 logic stages (-3.6 ns in M1, -1.2 ns
+  in `tdc_arty_top`). This is block 1's encoder, worse in M1 only because of placement
+  pressure; changing it changes the TDC's pipeline latency.
+* NCO slip-threshold compares `u_ld.c_lt / c_gt / n_gt` from the `slip_thr` register
+  (-2.9 ns), the timeout compare `u_ld.tmo_e` (-2.5 ns), and the gate compare `ge_h`
+  (-2.2 ns). None of these is in the loop's feedback path.
+* UART: the 173-bit shift register's enable (-2.9 ns in M1, -1.0 ns alone), and in
+  `tdc_arty_top` the TDC output enable from the UART FIFO's `s_ready` (`m_raw`, -1.7 ns).
+
+Seed-to-seed spread is large: before these changes `tdc_arty_top` gave -2.6, -3.0 and
+-3.2 ns on seeds 1 to 3. Only seed 1 has been run since, so read each number as one sample.
 
 ## Setup on Windows
 
