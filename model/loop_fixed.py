@@ -37,7 +37,7 @@ reaches it). Sized for 250 MHz: no carry chain wider than ~24 bits in a cycle.
   n+DP_LAT  phase correction visible:     P[n+DP_LAT] includes dphi
   fclk[X+FCLK_LAT] = (fps[X] * 4000) >> 16 and P[t+1] = P[t] + fclk[t].
   POP_GAP = 8 guarantees hit k+1's E stage runs after every state update of hit
-  k (they finish at F + 1 = E + 7), so every hit sees the state left by the
+  k (all visible by F + 2 = E + 8, the RTL's registered clears last), so every hit sees the state left by the
   previous one (no pipeline hazard). The per-hit arithmetic is exactly that of
   the unpipelined loop; only the cycles above moved. A correction can still be on
   its way when the next hit samples P and fps: real extra loop delay at high rates.

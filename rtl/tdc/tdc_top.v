@@ -83,6 +83,10 @@ module tdc_top #(
 );
     localparam integer LATENCY = 4;    // must match tdc_frontend
 
+    wire [2:0] rst_t;                  // pipelined reset, one tap per sub-block
+    rst_tree #(.N(3)) u_rst (.clk(clk), .rst_in(rst), .rst(rst_t));
+    wire rst_cc = rst_t[0], rst_hd = rst_t[1], rst_o = rst_t[2];
+
     wire [FINE_W-1:0]   fe_fine;
     wire                fe_t0, fe_zero, fe_full;
     wire [COARSE_W-1:0] coarse_aligned;
@@ -106,7 +110,7 @@ module tdc_top #(
 
     tdc_coarse_counter #(.COARSE_W(COARSE_W), .DELAY(LATENCY)) u_cc (
         .clk            (clk),
-        .rst            (rst),
+        .rst            (rst_cc),
         .coarse         (coarse_now),
         .coarse_aligned (coarse_aligned)
     );
@@ -121,7 +125,7 @@ module tdc_top #(
         .CONFIRM_CYC (CONFIRM_CYC)
     ) u_hd (
         .clk       (clk),
-        .rst       (rst),
+        .rst       (rst_hd),
         .fine      (fe_fine),
         .t0        (fe_t0),
         .zero      (fe_zero),
@@ -161,7 +165,7 @@ module tdc_top #(
     reg [FINE_W-1:0]   ev1_fine = {FINE_W{1'b0}};
 
     always @(posedge clk) begin
-        ev1_valid  <= ev_valid & ~rst;
+        ev1_valid  <= ev_valid & ~rst_o;
         ev1_coarse <= ev_coarse;
         ev1_fine   <= ev_fine;
     end
@@ -169,7 +173,7 @@ module tdc_top #(
     // ---- output register with drop-on-full ----
     always @(posedge clk) begin
         overflow <= 1'b0;
-        if (rst) begin
+        if (rst_o) begin
             m_valid  <= 1'b0;
             drop_cnt <= 16'd0;
         end else begin

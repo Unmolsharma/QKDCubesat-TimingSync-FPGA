@@ -31,10 +31,11 @@
 // NO-HIT TIMEOUT: (t_nco - c_last) > 2^(L + to_shift) clocks -> exit. With the
 //   default to_shift = 5 that is 32 mean hit spacings (false-timeout probability
 //   e^-32 per hit), so at low rates a short signal gap is flywheeled through
-//   instead of dropping lock. The check takes 3 cycles: cycle X acts on
-//   t_nco[X-3]. It is blocked from a hit's E stage until its F stage + 3, because
-//   by then the idle count has caught up with that hit's c_last. model/loop_fixed.py
-//   has the same rule.
+//   instead of dropping lock. Cycle X acts on t_nco[X-3], and the check is blocked
+//   from a hit's E stage until its F stage + 3: model/loop_fixed.py has the same
+//   rule. To get a registered decision without moving that, the arithmetic runs one
+//   cycle ahead on t_lead1 = t_nco + 1, and c_last is taken at F-1 (nothing can look
+//   at it earlier: the check is blocked).
 //
 // PIPELINE (E = n+7, F = E+6 = n+13; the next hit's E is at least 8 cycles later)
 //   E      mx low   (sq - mse)
@@ -43,8 +44,15 @@
 //   E+3    mse + shift, low
 //   E+4    ... high: mse committed, visible in E+5
 //   E+5    threshold compares
-//   F      decision: to_acq, enter_ramp, locked_next (combinational)
+//   F      decision: to_acq_f, enter_ramp, locked_next (combinational)
 // The sgn candidates and their threshold flags are ready before F.
+//
+// FANOUT. Leaving ACQ/RAMP/LOCK clears about 60 registers. Only `state` and the
+// output's lock flag need that in the same cycle. Everything else clears from a
+// register (clr, one copy per block), one cycle after an exit at F (F + 2 is
+// still no later than the next hit's E stage) and in the same cycle as a timeout
+// (decided a cycle early, see above). The counters count from registered events.
+// None of this moves anything the next hit can see.
 // =============================================================================
 `timescale 1ns/1fs
 `default_nettype none
@@ -54,7 +62,7 @@ module nco_lock_det #(
 )(
     input  wire               clk,
     input  wire               rst,
-    input  wire [COARSE_W-1:0] t_nco,
+    input  wire [COARSE_W-1:0] t_lead1,        // t_nco + 1
     // configuration
     input  wire [3:0]         mse_shift,
     input  wire [3:0]         mse_shift_trk,
@@ -70,14 +78,15 @@ module nco_lock_det #(
     input  wire [31:0]        sq,             // valid at E and E+1
     input  wire               noise,
     input  wire               st_commit,      // E+4
-    input  wire               busy,           // hit between E and F + 3
+    input  wire               busy_e,         // two cycles early: hit between E and F + 3
+    input  wire               st_clast,       // F - 1
     input  wire [COARSE_W-1:0] coarse,        // stable until after F
     // F stage
     input  wire               f_valid,
     input  wire               gear_done,
     input  wire [4:0]         L,
     // decisions
-    output wire               to_acq,
+    output wire               clr_next,       // D input of each block's own clear register
     output wire               enter_ramp,
     output wire               locked_next,    // state after this cycle == LOCK
     output reg  [1:0]         state = 2'd0,
@@ -116,6 +125,24 @@ module nco_lock_det #(
         sh    <= mx >>> w;
         sh_rb <= (w == 4'd0) ? 1'b0 : mx[w - 1'b1];
         mn_lo <= {1'b0, mse[15:0]} + {1'b0, sh[15:0]} + sh_rb;
+    end
+
+    // ---- cleared by `clr` (below): the reject run and mse ----
+    (* max_fanout = 48 *) reg clr = 1'b1;
+    always @(posedge clk) begin
+        if (e_valid) rej <= noise ? ((rej == 8'hFF) ? rej : rej + 1'b1) : 8'd0;
+        if (st_commit) mse <= {mn_hi, mn_lo[15:0]};
+        if (clr) begin
+            rej <= 8'd0;
+            mse <= MSE_INIT;
+        end
+    end
+
+    // ---- c_last at F-1 (see NO-HIT TIMEOUT) ----
+    always @(posedge clk) begin
+        if (st_clast) c_last <= coarse;
+        if (rst)           last_valid <= 1'b0;
+        else if (st_clast) last_valid <= 1'b1;
     end
 
     // ---- sgn candidates and flags, all settled well before F ----
@@ -166,44 +193,52 @@ module nco_lock_det #(
     reg  [COARSE_W-1:0] id = {COARSE_W{1'b0}};
     reg  [COARSE_W-25:0] t_hi = 0, nc_hi = 0;
     reg  [6:0]          to_s = 7'd0;
-    reg  [COARSE_W-1:0] to_mask = {COARSE_W{1'b1}};
-    reg                 to_flag = 1'b0;
+    reg  [COARSE_W:0]   to_thr = {1'b0, {COARSE_W{1'b0}}} + 1'b1;   // 2^s, or 2^COARSE_W: never
+    reg                 tmo_e = 1'b0;     // cycle X-1: "the idle check says exit in X"
+    reg                 timeout = 1'b0;   // cycle X
     always @(posedge clk) begin
-        id_lo   <= {1'b0, t_nco[23:0]} + {1'b0, ~c_last[23:0]};
-        t_hi    <= t_nco[COARSE_W-1:24];
+        id_lo   <= {1'b0, t_lead1[23:0]} + {1'b0, ~c_last[23:0]};
+        t_hi    <= t_lead1[COARSE_W-1:24];
         nc_hi   <= ~c_last[COARSE_W-1:24];
         id      <= {t_hi + nc_hi + id_lo[24], id_lo[23:0]};
         to_s    <= {2'd0, L} + {2'd0, to_shift};
-        to_mask <= (to_s >= COARSE_W) ? {COARSE_W{1'b0}} : ({COARSE_W{1'b1}} << to_s);
-        to_flag <= |(id & to_mask);
+        // (idle - 1) >> s != 0  <=>  idle - 1 >= 2^s: one carry chain instead of an AND-OR tree
+        to_thr  <= (to_s >= COARSE_W) ? ({1'b1, {COARSE_W{1'b0}}}) : ({{COARSE_W{1'b0}}, 1'b1} << to_s);
+        tmo_e   <= !busy_e && last_valid && ({1'b0, id} >= to_thr);
     end
-    wire timeout = !busy && (state != ACQ) && last_valid && to_flag;
+    // tmo_e cannot be set in a cycle that holds an F stage, so state cannot change
+    // between here and X, except by this very timeout (hence !timeout: fire once).
+    wire tmo_fire = tmo_e && (state != ACQ) && !timeout;
+    always @(posedge clk) timeout <= tmo_fire;
 
-    assign to_acq     = f_exit || f_slip_exit || timeout;
+    wire to_acq_f = f_exit || f_slip_exit;
+    wire to_acq   = to_acq_f || timeout;
+    assign clr_next   = to_acq_f || tmo_fire;
     assign enter_ramp = f_to_ramp;
-    assign locked_next = !to_acq && ((state == LOCK) || f_to_lock);
+    assign locked_next = !to_acq_f && ((state == LOCK) || f_to_lock);
+
+    // ---- one clear register per block: rst is OR-ed in, so it costs no extra pin ----
+    always @(posedge clk) clr <= rst || clr_next;
 
     // which state is being left (for the counters)
     wire was_lock = (state == LOCK) || f_to_lock;     // f_to_lock + slip exit = an unlock
+    wire is_unlock = (to_acq_f && f_slip_exit) ? was_lock : (state == LOCK);
+    reg  ev_unlock = 1'b0, ev_abort = 1'b0;
+    always @(posedge clk) begin
+        ev_unlock <= clr_next &&  is_unlock;
+        ev_abort  <= clr_next && !is_unlock;
+    end
 
     always @(posedge clk) begin
         if (rst) begin
-            state <= ACQ; mse <= MSE_INIT; rej <= 8'd0; sgn <= 25'sd0; slip_armed <= 1'b1;
-            last_valid <= 1'b0;
+            state <= ACQ; sgn <= 25'sd0; slip_armed <= 1'b1;
             unlock_cnt <= 16'd0; abort_cnt <= 16'd0; suspect_cnt <= 16'd0;
             noise_cnt <= 16'd0; hit_cnt <= 16'd0;
         end else begin
-            // E stage: reject run
-            if (e_valid) begin
-                rej <= noise ? ((rej == 8'hFF) ? rej : rej + 1'b1) : 8'd0;
-                if (noise && noise_cnt != 16'hFFFF) noise_cnt <= noise_cnt + 1'b1;
-            end
-            if (st_commit)
-                mse <= {mn_hi, mn_lo[15:0]};
+            // E stage: noise count
+            if (e_valid && noise && noise_cnt != 16'hFFFF) noise_cnt <= noise_cnt + 1'b1;
             // F stage: decisions
             if (f_valid) begin
-                c_last <= coarse;
-                last_valid <= 1'b1;
                 if (hit_cnt != 16'hFFFF) hit_cnt <= hit_cnt + 1'b1;
                 if (f_to_ramp) state <= RAMP;
                 if (f_to_lock) state <= LOCK;
@@ -219,16 +254,9 @@ module nco_lock_det #(
                     end
                 end
             end
-            if (to_acq) begin
-                state <= ACQ;
-                mse   <= MSE_INIT;
-                rej   <= 8'd0;
-                if (f_slip_exit ? was_lock : (state == LOCK)) begin
-                    if (unlock_cnt != 16'hFFFF) unlock_cnt <= unlock_cnt + 1'b1;
-                end else if (abort_cnt != 16'hFFFF) begin
-                    abort_cnt <= abort_cnt + 1'b1;
-                end
-            end
+            if (to_acq) state <= ACQ;
+            if (ev_unlock && unlock_cnt != 16'hFFFF) unlock_cnt <= unlock_cnt + 1'b1;
+            if (ev_abort  && abort_cnt  != 16'hFFFF) abort_cnt  <= abort_cnt  + 1'b1;
         end
     end
 endmodule

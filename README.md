@@ -357,8 +357,20 @@ marginal without the delay. Twice the RTL delay degrades the 100 MHz stress corn
 badly (8/48 at p = 0.3), so there is little margin for more pipelining at those rates.
 
 The throughput cap costs little at a single channel's rates: at p = 0.5 and
-100 MHz (23.7 M accepted hits/s) 130 of about 273 000 hits (0.05 %) were dropped. Five merged
-channels at high rates could exceed the cap; that case has not been simulated.
+100 MHz (23.7 M accepted hits/s) 130 of about 273 000 hits (0.05 %) were dropped.
+
+**High-fanout control without extra loop delay.** Leaving ACQ/RAMP/LOCK clears
+about 60 registers. Only `state` and the output's lock flag change in the same
+cycle; the rest clear from per-block registers (`clr`), one cycle after an exit at
+F, which is still no later than the next hit's E stage. The no-hit timeout is
+decided a cycle early on `t_nco + 1`, so it still acts in the same cycle as before.
+Reset reaches each block through its own register in a chain (`rtl/top/rst_tree.v`
+and the taps in `nco_top`). The loop's cycle timing is unchanged:
+`model/loop_fixed.py` needed no edit and the regression is bit-exact. Two things
+outside the loop did move. The align FIFO's `s_ready` is registered, so 14 of its 16
+entries are usable. Command writes take two more clocks.
+
+Five merged channels at high rates could exceed the cap; that case has not been simulated.
 
 ## Block 2 results (SIMULATED)
 

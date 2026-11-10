@@ -111,9 +111,16 @@ module tdc_uart_readout #(
     reg           first = 1'b0;
     reg           mode_lat = 1'b0;
 
-    reg        tx_start = 1'b0;
+    reg        tx_start = 1'b0, tx_start_d = 1'b0;
     reg [7:0]  tx_data = 8'd0;
     wire       tx_busy;
+    // busy registered (it gates the 173-bit shift register); start_d covers the
+    // cycle in which the transmitter is already busy but busy_r doesn't show it yet
+    reg        tx_busy_r = 1'b0;
+    always @(posedge clk) begin
+        tx_busy_r  <= tx_busy;
+        tx_start_d <= tx_start;
+    end
 
     // Zero-extend into the fixed payload fields, then left-align in sr.
     wire [11:0] fine12 = rd_data[FINE_W-1:0];
@@ -188,7 +195,7 @@ module tdc_uart_readout #(
             F_SEND:
                 if (nleft == 5'd0) begin
                     fstate <= F_IDLE;
-                end else if (!tx_busy && !tx_start) begin
+                end else if (!tx_busy_r && !tx_start && !tx_start_d) begin
                     tx_start <= 1'b1;
                     if (first) begin
                         tx_data <= {1'b1, ftype, sr[SRW-1 -: 5]};

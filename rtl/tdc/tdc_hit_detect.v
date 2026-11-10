@@ -92,6 +92,19 @@ module tdc_hit_detect #(
 
     assign dead = (state == S_CONFIRM) || (state == S_WAIT0);
 
+    // Capture registers: no reset (the values mean nothing until ev_valid), which
+    // keeps rst off these wide enables.
+    always @(posedge clk) begin
+        if ((state == S_IDLE || state == S_PENDING) && t0 && !full) begin
+            cand_coarse <= coarse;
+            cand_fine   <= fine;
+        end
+        if (state == S_CONFIRM && full) begin
+            ev_coarse <= cand_coarse;
+            ev_fine   <= cand_fine;
+        end
+    end
+
     always @(posedge clk) begin
         ev_valid  <= 1'b0;
         short_evt <= 1'b0;
@@ -110,8 +123,6 @@ module tdc_hit_detect #(
                         sat_evt <= 1'b1;             // edge beyond the line
                         state   <= S_WAIT0;
                     end else begin
-                        cand_coarse <= coarse;
-                        cand_fine   <= fine;
                         wait_cnt    <= 3'd0;
                         state       <= S_CONFIRM;
                     end
@@ -125,8 +136,6 @@ module tdc_hit_detect #(
             S_CONFIRM:
                 if (full) begin
                     ev_valid  <= 1'b1;
-                    ev_coarse <= cand_coarse;
-                    ev_fine   <= cand_fine;
                     state     <= S_WAIT0;
                 end else if (!t0 || wait_cnt == CONFIRM_CYC - 1) begin
                     short_evt <= 1'b1;               // never filled the line

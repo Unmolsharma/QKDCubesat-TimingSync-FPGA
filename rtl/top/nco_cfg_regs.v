@@ -112,13 +112,20 @@ module nco_cfg_regs #(
                          (cmd != CMD_W && cmd != CMD_R)       ? 8'd3 :
                          (!addr_ok || (cmd == CMD_W && !addr_rw)) ? 8'd2 : 8'd0;
 
-    // stage 2: the readback uses the register value after the write
-    reg        resp = 1'b0;
+    // stage 2 (exec): check, registered. stage 3 (dec): decode the write enables.
+    // stage 4 (wr): write. stage 5 (resp): the readback uses the register value after
+    // the write. (A command takes ~35 us to arrive at 2 Mbaud; a few cycles are free.)
+    reg        resp = 1'b0, wr = 1'b0, dec = 1'b0;
+    reg [7:0]  r_cmd = 8'd0;
     reg [7:0]  r_addr = 8'd0, r_status = 8'd0;
+    reg [8:0]  we = 9'd0;
+    reg [31:0] w_dat = 32'd0;
 
     always @(posedge clk) begin
         rb_valid <= 1'b0;
         exec <= 1'b0;
+        wr   <= 1'b0;
+        dec  <= 1'b0;
         resp <= 1'b0;
         if (rst) begin
             hunting <= 1'b1; nbytes <= 3'd0; idle <= 16'd0;
@@ -142,27 +149,32 @@ module nco_cfg_regs #(
                 if (idle == IDLE_TIMEOUT - 1) begin hunting <= 1'b1; idle <= 16'd0; end
                 else idle <= idle + 1'b1;
             end
-            // ---- execute (cycle after the last byte) ----
+            // ---- execute (cycle after the last byte): check, then decode ----
             if (exec) begin
-                cmd_cnt <= cmd_cnt + 1'b1;
-                if (status != 8'd0 && err_cnt != 8'hFF) err_cnt <= err_cnt + 1'b1;
-                if (status == 8'd0 && cmd == CMD_W) begin
-                    case (addr)
-                    8'h00: begin gate_thr <= wdat[15:0]; gate_en <= wdat[16]; end
-                    8'h01: lock_thr <= wdat;
-                    8'h02: unlock_thr <= wdat;
-                    8'h03: begin mse_shift <= wdat[3:0]; mse_shift_trk <= wdat[11:8]; end
-                    8'h04: begin tau_ovr <= wdat[4:0]; tau_ovr_en <= wdat[8]; end
-                    8'h05: begin kp_acq <= wdat[3:0]; kp_trk <= wdat[11:8]; gear_log2 <= wdat[19:16]; end
-                    8'h06: rej_max <= wdat[7:0];
-                    8'h07: to_shift <= wdat[4:0];
-                    8'h08: begin slip_thr <= wdat[15:0]; slip_unlock <= wdat[16]; end
-                    default: ;
-                    endcase
-                end
-                resp     <= 1'b1;
+                dec      <= 1'b1;
+                r_cmd    <= cmd;
                 r_addr   <= addr;
                 r_status <= status;
+                w_dat    <= wdat;
+            end
+            if (dec) begin
+                wr <= 1'b1;
+                we <= (r_status == 8'd0 && r_cmd == CMD_W && r_addr <= 8'h08) ? (9'd1 << r_addr[3:0]) : 9'd0;
+            end
+            // ---- write ----
+            if (wr) begin
+                cmd_cnt <= cmd_cnt + 1'b1;
+                if (r_status != 8'd0 && err_cnt != 8'hFF) err_cnt <= err_cnt + 1'b1;
+                if (we[0]) begin gate_thr <= w_dat[15:0]; gate_en <= w_dat[16]; end
+                if (we[1]) lock_thr <= w_dat;
+                if (we[2]) unlock_thr <= w_dat;
+                if (we[3]) begin mse_shift <= w_dat[3:0]; mse_shift_trk <= w_dat[11:8]; end
+                if (we[4]) begin tau_ovr <= w_dat[4:0]; tau_ovr_en <= w_dat[8]; end
+                if (we[5]) begin kp_acq <= w_dat[3:0]; kp_trk <= w_dat[11:8]; gear_log2 <= w_dat[19:16]; end
+                if (we[6]) rej_max <= w_dat[7:0];
+                if (we[7]) to_shift <= w_dat[4:0];
+                if (we[8]) begin slip_thr <= w_dat[15:0]; slip_unlock <= w_dat[16]; end
+                resp <= 1'b1;
             end
             // ---- readback (registers already updated) ----
             if (resp) begin

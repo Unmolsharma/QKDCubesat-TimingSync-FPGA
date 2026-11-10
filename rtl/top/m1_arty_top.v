@@ -96,7 +96,9 @@ module m1_arty_top #(
     always @(posedge clk or negedge locked)
         if (!locked) rst_sync <= 3'b111;
         else         rst_sync <= {rst_sync[1:0], ~ck_rst};
-    wire rst = rst_sync[2];
+    wire [4:0] rst_t;
+    rst_tree #(.N(5)) u_rst (.clk(clk), .rst_in(rst_sync[2]), .rst(rst_t));
+    wire rst_tdc = rst_t[0], rst_nco = rst_t[1], rst_cfg = rst_t[2], rst_uart = rst_t[3], rst_led = rst_t[4];
     always @(posedge clk) sw3_s <= {sw3_s[0], sw[3]};
 
     // ---------------- satellite emulator (its own clock domain) ----------------
@@ -127,7 +129,7 @@ module m1_arty_top #(
         .COARSE_W(COARSE_W), .LUT_FILE(LUT_FILE),
         .TAP_NOM_PS(TAP_NOM_PS), .JITTER_PS(JITTER_PS), .SEED(SEED)
     ) u_tdc (
-        .clk(clk), .rst(rst), .hit(ja[0]),
+        .clk(clk), .rst(rst_tdc), .hit(ja[0]),
         .m_valid(tdc_valid), .m_ready(tdc_ready), .m_raw(m_raw), .m_cal(m_cal),
         .overflow(), .dead(), .drop_cnt(drop_cnt), .short_cnt(short_cnt), .sat_cnt(sat_cnt),
         .rej_cnt(), .coarse_now(coarse_now),
@@ -145,9 +147,9 @@ module m1_arty_top #(
     wire [7:0]  c_rej;
     wire [4:0]  c_to, c_tau;
     uart_rx #(.CLKS_PER_BIT(CLKS_PER_BIT)) u_rx (
-        .clk(clk), .rst(rst), .rx(uart_txd_in), .valid(rx_valid), .data(rx_data), .frame_err());
+        .clk(clk), .rst(rst_cfg), .rx(uart_txd_in), .valid(rx_valid), .data(rx_data), .frame_err());
     nco_cfg_regs u_cfg (
-        .clk(clk), .rst(rst), .rx_valid(rx_valid), .rx_data(rx_data),
+        .clk(clk), .rst(rst_cfg), .rx_valid(rx_valid), .rx_data(rx_data),
         .rb_valid(rb_valid), .rb_data(rb_data),
         .kp_acq(c_kp_acq), .kp_trk(c_kp_trk), .gear_log2(c_gear), .gate_en(c_gate_en),
         .gate_thr(c_gate_thr), .mse_shift(c_mse), .mse_shift_trk(c_mse_trk),
@@ -166,7 +168,7 @@ module m1_arty_top #(
     wire signed [24:0] sgn;
     wire [15:0]        unlock_cnt, abort_cnt, suspect_cnt, noise_cnt, late_cnt, hit_cnt;
     nco_top #(.FPS_NOM(FPS_NOM), .T_SLOT_PS(T_SLOT_PS)) u_nco (
-        .clk(clk), .rst(rst), .time_now(coarse_now),
+        .clk(clk), .rst(rst_nco), .time_now(coarse_now),
         .s_valid(tdc_valid), .s_ready(tdc_ready), .s_coarse(m_cal[PS_W +: COARSE_W]),
         .s_fine(m_cal[PS_W-1:0]), .s_tag(4'd0),
         .m_valid(nco_valid), .m_ready(1'b1), .m_slot(nco_slot), .m_resid_ps(),
@@ -183,7 +185,8 @@ module m1_arty_top #(
         .hit_cnt(hit_cnt), .out_drop_cnt(), .t_nco());
 
     // ---------------- telemetry word (layout: scripts/capture.py) ----------------
-    wire signed [47:0] foff  = fps - $signed(FPS_NOM);
+    reg  signed [47:0] foff  = 48'sd0;               // registered: telemetry, latency irrelevant
+    always @(posedge clk) foff <= fps - $signed(FPS_NOM);
     wire signed [39:0] foff8 = foff >>> 8;            // 2^-48 slot/ps
     wire signed [16:0] sgn8  = sgn >>> 8;             // 2^-16 slot
     wire [172:0] tlm = {st, kp, L, foff8[31:0], mse[31:16], sgn8[15:0],
@@ -194,7 +197,7 @@ module m1_arty_top #(
         .COARSE_W(COARSE_W), .FINE_W(FINE_W), .FIFO_AW(FIFO_AW),
         .CLKS_PER_BIT(CLKS_PER_BIT), .STATUS_PERIOD(STATUS_PERIOD)
     ) u_uart (
-        .clk(clk), .rst(rst),
+        .clk(clk), .rst(rst_uart),
         .s_valid(tdc_valid & tdc_ready & sw3_s[1]), .s_ready(),
         .s_coarse(m_raw[FINE_W +: COARSE_W]), .s_fine(m_raw[FINE_W-1:0]),
         .mode_ts(1'b1), .drop_cnt(drop_cnt), .short_cnt(short_cnt), .sat_cnt(sat_cnt),
@@ -204,7 +207,7 @@ module m1_arty_top #(
     // ---------------- LEDs ----------------
     reg unlock_seen = 1'b0, sat_seen = 1'b0;
     always @(posedge clk)
-        if (rst) begin
+        if (rst_led) begin
             unlock_seen <= 1'b0; sat_seen <= 1'b0;
         end else begin
             unlock_seen <= unlock_seen | (unlock_cnt != 16'd0);

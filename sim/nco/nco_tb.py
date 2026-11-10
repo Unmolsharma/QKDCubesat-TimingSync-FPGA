@@ -112,18 +112,20 @@ class NcoTB:
         while True:
             await RisingEdge(d.m_valid)
             await ReadOnly()
-            fresh = True            # internal state only lines up with the output's first cycle
+            first = True            # internal state only lines up with the output's first cycle
             while True:
+                rec = None
                 if val(d.m_ready):
-                    self.outs.append(dict(slot=val(d.m_slot), e24=sval(d.m_e24, 25),
-                                          resid=sval(d.m_resid_ps, 16), noise=bool(val(d.m_noise)),
-                                          locked=bool(val(d.m_locked)), tag=val(d.m_tag),
-                                          c=val(d.m_coarse),
-                                          mse=val(d.u_nco.tlm_mse) if fresh else None,
-                                          sgn=sval(d.u_nco.tlm_sgn, 25) if fresh else None))
-                fresh = False
+                    rec = dict(slot=val(d.m_slot), e24=sval(d.m_e24, 25),
+                               resid=sval(d.m_resid_ps, 16), noise=bool(val(d.m_noise)),
+                               locked=bool(val(d.m_locked)), tag=val(d.m_tag), c=val(d.m_coarse),
+                               mse=None, sgn=sval(d.u_nco.tlm_sgn, 25) if first else None)
+                    self.outs.append(rec)
                 await RisingEdge(d.clk)
                 await ReadOnly()
+                if first and rec is not None:
+                    rec["mse"] = val(d.u_nco.tlm_mse)   # an exit clears mse a cycle after the output
+                first = False
                 if not val(d.m_valid):
                     break
 

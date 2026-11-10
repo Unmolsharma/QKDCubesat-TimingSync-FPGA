@@ -27,6 +27,7 @@
 // the halves of fps by 125, and one add joins them.
 //
 // rst must last at least 8 cycles, longer than these pipelines (nco_top stretches it).
+// The accumulators use their own copy, one cycle later, to halve the fanout.
 // =============================================================================
 `timescale 1ns/1fs
 `default_nettype none
@@ -124,13 +125,15 @@ module nco_core #(
     end
 
     // ---------------- P += I, one segment per cycle, then line the segments up ----------------
+    (* max_fanout = 64 *) reg rst_p = 1'b1;
+    always @(posedge clk) rst_p <= rst;
     reg [22:0] p0 = 23'd0, p1 = 23'd0, p2 = 23'd0;
     reg [21:0] p3 = 22'd0;
     reg [21:0] p0_d1 = 22'd0, p0_d2 = 22'd0, p0_d3 = 22'd0;
     reg [21:0] p1_d1 = 22'd0, p1_d2 = 22'd0;
     reg [21:0] p2_d1 = 22'd0;
     always @(posedge clk) begin
-        if (rst) begin
+        if (rst_p) begin
             p0 <= 23'd0; p1 <= 23'd0; p2 <= 23'd0; p3 <= 22'd0;
             p0_d1 <= 22'd0; p0_d2 <= 22'd0; p0_d3 <= 22'd0;
             p1_d1 <= 22'd0; p1_d2 <= 22'd0; p2_d1 <= 22'd0;

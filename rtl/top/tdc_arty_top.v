@@ -83,7 +83,9 @@ module tdc_arty_top #(
     always @(posedge clk or negedge locked)
         if (!locked) rst_sync <= 3'b111;
         else         rst_sync <= {rst_sync[1:0], ~ck_rst};
-    wire rst = rst_sync[2];
+    wire [2:0] rst_t;
+    rst_tree #(.N(3)) u_rst (.clk(clk), .rst_in(rst_sync[2]), .rst(rst_t));
+    wire rst_tdc = rst_t[0], rst_uart = rst_t[1], rst_led = rst_t[2];
 
     always @(posedge clk) begin
         sw0_s <= {sw0_s[0], sw[0]};
@@ -120,7 +122,7 @@ module tdc_arty_top #(
         .SEED       (SEED)
     ) u_tdc (
         .clk        (clk),
-        .rst        (rst),
+        .rst        (rst_tdc),
         .hit        (hit),
         .m_valid    (m_valid),
         .m_ready    (m_ready),
@@ -147,7 +149,7 @@ module tdc_arty_top #(
         .STATUS_PERIOD (STATUS_PERIOD)
     ) u_uart (
         .clk       (clk),
-        .rst       (rst),
+        .rst       (rst_uart),
         .s_valid   (m_valid),
         .s_ready   (m_ready),
         .s_coarse  (m_raw[FINE_W +: COARSE_W]),
@@ -166,7 +168,7 @@ module tdc_arty_top #(
     // ---------------- LEDs ----------------
     reg drop_seen = 1'b0, short_seen = 1'b0, sat_seen = 1'b0;
     always @(posedge clk)
-        if (rst) begin
+        if (rst_led) begin
             drop_seen <= 1'b0; short_seen <= 1'b0; sat_seen <= 1'b0;
         end else begin
             drop_seen  <= drop_seen  | (drop_cnt  != 16'd0);

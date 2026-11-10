@@ -22,8 +22,8 @@
 //   That only happens if the input is very out of order or D is too small.
 //
 //   POP_GAP = 8 is what keeps the control stages hazard-free: the loop's
-//   state updates take 7 cycles (nco_top), so every hit sees the state left
-//   by the previous one. It also limits sustained throughput to 31.25 Mhit/s.
+//   state updates are visible 8 cycles after E (nco_top), so every hit sees the
+//   state left by the previous one. It also limits sustained throughput to 31.25 Mhit/s.
 //
 // PIPELINE. A 48-bit compare doesn't fit in one cycle, so this runs ahead of
 // the NCO: t_lead = t_nco + LEAD (4), so the decision is ready just in time.
@@ -37,8 +37,11 @@
 // J_MAX <= 24 keeps fine' within the phase detector's 17 bits for any fine_ps up
 // to 35071 ps; real fine_ps is under 5 ns, and 11 ns for the ideal LUT at code 511.
 //
-// BACK-PRESSURE: s_ready = FIFO not full (2^AW entries). A full FIFO makes
-// the TDC drop and count the hit, the same policy as block 1.
+// BACK-PRESSURE: s_ready is registered (it drives the TDC's wide output enable):
+// high while at most 2^AW - 3 entries were in use in the previous cycle, so one
+// write can land after the FIFO looks full and still fit. Usable depth is
+// 2^AW - 2 = 14. A full FIFO makes the TDC drop and count the hit, the same policy
+// as block 1.
 // =============================================================================
 `timescale 1ns/1fs
 `default_nettype none
@@ -78,7 +81,10 @@ module nco_align #(
 
     wire empty = (wr == rd);
     wire full  = (wr[AW] != rd[AW]) && (wr[AW-1:0] == rd[AW-1:0]);
-    assign s_ready = ~full & ~rst;
+    reg s_ready_r = 1'b0;
+    wire [AW:0] occ = wr - rd;               // AW+1 bits: wraps with the pointers
+    always @(posedge clk) s_ready_r <= ~rst && (occ <= (1 << AW) - 3);
+    assign s_ready = s_ready_r;
 
     // ---- z: registered FIFO head ----
     reg [DW-1:0]        head = {DW{1'b0}};

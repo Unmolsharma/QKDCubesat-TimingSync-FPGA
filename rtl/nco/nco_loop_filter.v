@@ -30,6 +30,9 @@
 //
 // Rounding: dphi is exact (e24 << (16-kp), kp <= 16); df is round-half-up.
 //
+// tavg -> L takes 5 cycles, so a hit's L is ready at E+6. The next hit samples it at
+// its own E, at least 8 cycles later: L adds nothing to the loop delay.
+//
 // PIPELINE (n = the hit's pop cycle; E = n+7, see nco_top)
 //   n+2..n+4  d = coarse - previous coarse, saturated to 32 bits
 //   n+5, n+6  next tavg, ready to commit
@@ -70,7 +73,7 @@ module nco_loop_filter #(
     input  wire               acquired,      // state != ACQ (before this hit)
     input  wire [COARSE_W-1:0] coarse,       // valid from n+1 until after E
     // from the lock detector (F stage / idle cycles)
-    input  wire               to_acq,        // back to acquisition
+    input  wire               clr_next,      // back to acquisition: D of this block's clr
     input  wire               enter_ramp,    // phase acquired: start the gear ramp
     // to nco_core
     output reg                corr_valid = 1'b0,
@@ -88,7 +91,7 @@ module nco_loop_filter #(
     reg [COARSE_W-1:0] c_prev = {COARSE_W{1'b0}};
     reg                prev_valid = 1'b0;
 
-    // ---- L = round_log2(tavg >> 4), over three cycles ----
+    // ---- L = round_log2(tavg >> 4), over four cycles ----
     wire [31:0] ti = tavg[35:4];
     wire        b4 = |ti[31:16];
     wire [15:0] w4 = b4 ? ti[31:16] : ti[15:0];
@@ -104,6 +107,9 @@ module nco_loop_filter #(
     wire [3:0]  w2 = b2 ? m_w[7:4] : m_w[3:0];
     wire        b1 = |w2[3:2];
     wire [1:0]  w1 = b1 ? w2[3:2] : w2[1:0];
+    reg         rnd_bit = 1'b0;
+    reg  [5:0]  msb_d = 6'd0;
+    reg         m_any3 = 1'b0;
     reg  [5:0]  l_rnd = 6'd0;
     always @(posedge clk) begin
         m_hi   <= {b4, b3};
@@ -112,7 +118,10 @@ module nco_loop_filter #(
         ti_d   <= ti;
         msb    <= {1'b0, m_hi, b2, b1, w1[1]};
         m_any2 <= m_any;
-        l_rnd  <= !m_any2 ? 6'd0 : msb + ((msb != 6'd0) ? ti_d[msb[4:0] - 1'b1] : 1'b0);
+        rnd_bit <= (msb != 6'd0) ? ti_d[msb[4:0] - 1'b1] : 1'b0;
+        msb_d  <= msb;
+        m_any3 <= m_any2;
+        l_rnd  <= !m_any3 ? 6'd0 : msb_d + rnd_bit;
         L      <= tau_ovr_en ? tau_ovr :
                   tavg_valid ? ((l_rnd > 6'd30) ? 5'd30 : l_rnd[4:0]) : TAU_INIT_LOG2[4:0];
     end
@@ -187,8 +196,16 @@ module nco_loop_filter #(
         corr_df    <= left_d ? v : {{22{v_inc[25]}}, v_inc};
     end
 
+    (* max_fanout = 48 *) reg clr = 1'b1;
+    always @(posedge clk) clr <= rst || clr_next;
+
+    // c_prev at E+1 (u1): the next hit reads it from its n+2, at least 9 cycles later
+    always @(posedge clk) if (u1) c_prev <= coarse;
+
+    reg [15:0] gear_max = 16'd63;
     always @(posedge clk) begin
-        gear_last <= (gear_cnt == (16'd1 << gear_log2) - 1'b1);
+        gear_max  <= (16'd1 << gear_log2) - 1'b1;
+        gear_last <= (gear_cnt == gear_max);
         if (rst) begin
             kp <= kp_acq; gear_cnt <= 16'd0; gear_done <= 1'b0;
             tavg <= 36'd0; tavg_valid <= 1'b0; prev_valid <= 1'b0;
@@ -202,7 +219,6 @@ module nco_loop_filter #(
                         tavg <= {t_hi, t_lo[17:0]};
                     end
                 end
-                c_prev <= coarse;
                 prev_valid <= 1'b1;
                 if (acquired) begin
                     if (gear_last) begin
@@ -223,7 +239,7 @@ module nco_loop_filter #(
                 kp <= kp_trk;
             // lock-detector decisions (never in the same cycle as an E update:
             // nco_align's POP_GAP guarantees that)
-            if (to_acq) begin
+            if (clr) begin
                 kp <= kp_acq; gear_cnt <= 16'd0; gear_done <= 1'b0;
             end else if (enter_ramp) begin
                 gear_cnt <= 16'd0; gear_done <= 1'b0;
