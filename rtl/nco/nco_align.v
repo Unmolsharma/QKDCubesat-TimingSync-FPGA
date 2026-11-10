@@ -5,7 +5,7 @@
 //   The NCO is a real-time counter: its phase register only holds the value
 //   for "now". A timestamp {c, fine} describes a moment just before clock
 //   edge c, but the TDC delivers it ~10 clocks later. So the NCO's own time
-//   axis, t_nco, runs D clocks BEHIND the TDC's coarse counter (D = 23), and
+//   axis, t_nco, runs D clocks BEHIND the TDC's coarse counter (D = 30), and
 //   this FIFO holds each timestamp until t_nco reaches c. At that moment the
 //   phase register holds exactly phase(edge c), and the phase detector
 //   interpolates back by fine_ps.

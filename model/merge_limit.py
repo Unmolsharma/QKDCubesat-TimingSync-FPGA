@@ -34,8 +34,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import hitgen  # noqa: E402
 import loop_fixed as lfx  # noqa: E402
 
-CH_LAT = 9                  # capture edge -> channel FIFO (tdc_multi_top: 8 to 10)
-MAXLAT = 12                 # tdc_multi_top parameter
+CH_LAT = 11                 # capture edge -> channel FIFO (tdc_multi_top: 10 to 12)
+MAXLAT = 14                 # tdc_multi_top parameter
 CH_DEPTH = 8                # tdc_multi_top QAW = 3
 NCO_DEPTH = 14              # nco_align: 2^AW - 2 usable (registered s_ready)
 NUM_QUANTUM = 4

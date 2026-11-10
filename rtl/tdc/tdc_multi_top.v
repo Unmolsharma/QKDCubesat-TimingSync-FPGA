@@ -27,8 +27,8 @@
 //
 // MERGER AND ITS ORDERING GUARANTEE
 //   Every channel has the same pipeline, so a hit captured at edge c reaches
-//   its FIFO no later than coarse_now = c + MAXLAT (sync + encoder 4, detect +
-//   confirm <= 4, LUT 1, register 1 -> 10; MAXLAT = 12 with margin). A FIFO
+//   its FIFO no later than coarse_now = c + MAXLAT (sync + encoder 6, detect +
+//   confirm <= 4, LUT 1, register 1 -> 12; MAXLAT = 14 with margin). A FIFO
 //   head is therefore released only when coarse_now >= c + MAXLAT + 2: by
 //   then every hit with an earlier coarse count, on any channel, is already
 //   queued. Among the released-eligible heads the merger emits the one with
@@ -56,7 +56,7 @@ module tdc_multi_top #(
     parameter         LUT_DIR       = "",       // per-channel LUT_DIR/ch<i>.mem
     parameter integer CONFIRM_CYC   = 3,
     parameter integer QAW           = 3,        // per-channel FIFO depth 2^QAW
-    parameter integer MAXLAT        = 12,
+    parameter integer MAXLAT        = 14,
     // behavioural delay-line model (simulation only); channel i uses SEED + 101*i
     parameter real    TAP_NOM_PS    = 22.0,
     parameter real    TAP_SIGMA_PCT = 15.0,
@@ -86,7 +86,7 @@ module tdc_multi_top #(
     input  wire [FINE_W-1:0]          cal_addr,
     input  wire [PS_W-1:0]            cal_wdata
 );
-    localparam integer LATENCY = 4;
+    localparam integer LATENCY = 6;    // must match tdc_frontend
     localparam integer QW = COARSE_W + FINE_W + PS_W;
 
     wire [COARSE_W-1:0] coarse_aligned;

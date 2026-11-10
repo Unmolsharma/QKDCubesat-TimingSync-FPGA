@@ -29,11 +29,15 @@
 //   * Cost: an adder tree of ~N LUTs instead of ~N/2. For 192 taps that is
 //     trivial on an A100T.
 //
-// PIPELINE (chosen to close timing at 250 MHz on a -1 part)
-//   stage 1: split into 6-bit groups, one LUT6 level each -> 3-bit counts
-//   stage 2: sum 8 of those per group                     -> 6-bit counts
-//   stage 3: sum all stage-2 counts                        -> OUT_W bits
-//   Latency: 3 clk from `code` to `count`. For N=192: 32 -> 4 -> 1.
+// PIPELINE (250 MHz on a -1 part: no stage adds more than 4 small numbers)
+//   stage 1: 6-bit groups, one LUT6 level each       -> 3-bit counts (G1)
+//   stage 2: pairs                                   -> 4-bit counts
+//   stage 3: pairs                                   -> 5-bit counts
+//   stage 4: groups of 4                             -> 7-bit counts
+//   stage 5: sum of all                              -> OUT_W bits
+//   Latency: 5 clk from `code` to `count`. For N=192: 32 -> 16 -> 8 -> 2 -> 1.
+//   (It was 3 stages with an 8-way sum in stage 2: ~7 logic levels, the worst
+//   path of the board build.)
 // =============================================================================
 `timescale 1ns/1fs
 `default_nettype none
@@ -47,7 +51,9 @@ module tdc_encoder #(
     output wire [OUT_W-1:0]  count
 );
     localparam integer G1 = (N_TAPS + 5) / 6;   // stage-1 groups (6 bits)
-    localparam integer G2 = (G1 + 7) / 8;       // stage-2 groups (8 x 3 bits)
+    localparam integer G2 = (G1 + 1) / 2;       // pairs
+    localparam integer G3 = (G2 + 1) / 2;       // pairs
+    localparam integer G4 = (G3 + 3) / 4;       // groups of 4
 
     // Zero-extend to a whole number of 6-bit groups. Extra bits are 0, so the
     // count is unchanged.
@@ -55,8 +61,10 @@ module tdc_encoder #(
     assign din = code;
 
     reg [2:0]       s1 [0:G1-1];
-    reg [5:0]       s2 [0:G2-1];
-    reg [OUT_W-1:0] s3 = {OUT_W{1'b0}};
+    reg [3:0]       s2 [0:G2-1];
+    reg [4:0]       s3 [0:G3-1];
+    reg [6:0]       s4 [0:G4-1];
+    reg [OUT_W-1:0] s5 = {OUT_W{1'b0}};
 
     integer i, j;
 
@@ -69,35 +77,34 @@ module tdc_encoder #(
 
     initial begin
         for (i = 0; i < G1; i = i + 1) s1[i] = 3'd0;
-        for (i = 0; i < G2; i = i + 1) s2[i] = 6'd0;
+        for (i = 0; i < G2; i = i + 1) s2[i] = 4'd0;
+        for (i = 0; i < G3; i = i + 1) s3[i] = 5'd0;
+        for (i = 0; i < G4; i = i + 1) s4[i] = 7'd0;
     end
 
-    // stage 1
-    always @(posedge clk)
+    reg [6:0]       acc4;
+    reg [OUT_W-1:0] acc5;
+    always @(posedge clk) begin
         for (i = 0; i < G1; i = i + 1)
             s1[i] <= pop6(din[6*i +: 6]);
-
-    // stage 2
-    reg [5:0] acc2;
-    always @(posedge clk)
-        for (j = 0; j < G2; j = j + 1) begin
-            acc2 = 6'd0;
-            for (i = 0; i < 8; i = i + 1)
-                if (8*j + i < G1)
-                    acc2 = acc2 + s1[8*j + i];
-            s2[j] <= acc2;
+        for (i = 0; i < G2; i = i + 1)
+            s2[i] <= s1[2*i] + ((2*i + 1 < G1) ? s1[2*i + 1] : 3'd0);
+        for (i = 0; i < G3; i = i + 1)
+            s3[i] <= s2[2*i] + ((2*i + 1 < G2) ? s2[2*i + 1] : 4'd0);
+        for (j = 0; j < G4; j = j + 1) begin
+            acc4 = 7'd0;
+            for (i = 0; i < 4; i = i + 1)
+                if (4*j + i < G3)
+                    acc4 = acc4 + s3[4*j + i];
+            s4[j] <= acc4;
         end
-
-    // stage 3
-    reg [OUT_W-1:0] acc3;
-    always @(posedge clk) begin
-        acc3 = {OUT_W{1'b0}};
-        for (j = 0; j < G2; j = j + 1)
-            acc3 = acc3 + s2[j];
-        s3 <= acc3;
+        acc5 = {OUT_W{1'b0}};
+        for (j = 0; j < G4; j = j + 1)
+            acc5 = acc5 + s4[j];
+        s5 <= acc5;
     end
 
-    assign count = s3;
+    assign count = s5;
 endmodule
 
 `default_nettype wire

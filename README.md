@@ -38,7 +38,7 @@ Optical-link framing, two-way time transfer and the control FSM are later blocks
 
 ```
                          +------------------------ tdc_frontend ------------------------+
- hit (async) --[mux]---->| CARRY4 x 48 -> capture FF -> sync FF -> popcount, 3 stages   |--> fine (9b)
+ hit (async) --[mux]---->| CARRY4 x 48 -> capture FF -> sync FF -> popcount, 5 stages   |--> fine (9b)
    Pmod JA1     ^        | 192 taps       (same slice)  (ASYNC_REG)  + t0/zero/full flags|--> flags
  ring osc ------+ sw0    +---------------------------------------------------------------+
                                                                         |
@@ -62,7 +62,7 @@ Optical-link framing, two-way time transfer and the control FSM are later blocks
 |---|---|
 | `tdc_delay_line` | 48 x CARRY4 (192 taps) + in-slice capture FFs. Behavioural model when not `SYNTHESIS` |
 | `tdc_sync` | 2nd register stage (metastability) |
-| `tdc_encoder` | pipelined popcount, **3-cycle latency** |
+| `tdc_encoder` | pipelined popcount, **5-cycle latency** (no stage adds more than 4 numbers) |
 | `tdc_frontend` | the three above + aligned `t0` / `zero` / `full` flags |
 | `tdc_coarse_counter` | free-running 48-bit counter, delayed to match the frontend |
 | `tdc_hit_detect` | one timestamp per hit, dead time, pulse-width and coverage checks |
@@ -231,7 +231,7 @@ different values in the last digit.
 | Saturated (coverage) hits, default chain | 0 / 3000 (max code 184 of 192) | _TBD_ (`sat_cnt`) |
 | Saturated hits, fast corner (20 ps/tap) | **150 / 3000 (5 %), FAIL** | n/a |
 | Dead time (W = 12 ns, rise-to-rise) | accepted from 16.75 ns, always above 20.0 ns | _TBD_ |
-| Encoder latency | 3 clk (12 ns) | same (RTL) |
+| Encoder latency | 5 clk (20 ns) | same (RTL) |
 | Capture edge -> `m_valid` | 8 clk (32 ns) | same (RTL) |
 | Boundary test worst deviation (846 hits across edges) | 84 ps ideal LUT, **30 ps calibrated** | n/a |
 | Utilisation (LUT / FF / BRAM / carry) | n/a | _TBD_ |
@@ -321,7 +321,8 @@ RTL must equal it **bit for bit on every hit**, and in every test it does.
 ### Time convention end to end
 
 `t_hit = coarse·T_clk − fine_ps`, exactly as block 1. The NCO's time axis
-t_nco runs D = 23 clocks behind the TDC coarse counter. The phase detector
+t_nco runs D = 30 clocks behind the TDC coarse counter (enough for a merged
+5-channel hit, which reaches the NCO up to 21 clocks after its edge, to be released at j = 0). The phase detector
 interpolates `φ(t_hit) = phase[c] − fine_ps·f`. `sim/integration/test_tdc_nco.py`
 drives real pulses through the behavioural TDC into the NCO and checks every
 slot against the source. A wrong sign or a wrong edge association in the
@@ -379,8 +380,9 @@ three pipeline stages with 10-bit relative counters (`model/loop_fixed.py`,
 | 25 … `J_MAX` = 56, within 48 clocks of the last hit the loop used | released as *stale*: slot, error, residual and output as usual, every loop strobe masked |
 | otherwise | dropped before the FIFO and counted in `late_cnt`; takes no release slot |
 
-The three admission stages are offset by raising D from 20 to 23, so the loop's
-timing is unchanged. Stale hits add no loop delay: the loop never sees a hit more
+The three admission stages are offset by raising D from 20 to 23, and the two
+extra TDC encoder stages by raising it to 30, so the loop's timing is unchanged
+(`merge_limit.py` gives the same drops with the longer TDC latency). Stale hits add no loop delay: the loop never sees a hit more
 than 24 clocks old. All five hits of a 5-channel coincidence (released at j = 0, 8,
 16, 24, 32) are delivered unless the NCO was already 3 or more hits behind. fine′ =
 fine + j·4000 now needs 18 bits, so fine_ps must be below 38 144 ps (the TDC's is

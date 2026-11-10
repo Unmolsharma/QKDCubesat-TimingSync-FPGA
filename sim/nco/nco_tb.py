@@ -28,7 +28,7 @@ import hitgen  # noqa: E402
 import loop_fixed as lfx  # noqa: E402
 
 T_CLK_NS = 4
-LAT = 9                    # TDC capture edge -> timestamp delivered (block 1: 8-9 clk)
+LAT = 11                   # TDC capture edge -> timestamp delivered (block 1: 10-11 clk)
 F_SRC = float(os.environ.get("NCO_FSRC", "100e6"))
 
 

@@ -7,7 +7,7 @@
 //   (async)  |  192 taps      (in-slice)     (2nd stage)   + t0/zero/full flags|--> flags
 //            +------------------------------------------------------------------+
 //                                                                  |
-//   clk ---> tdc_coarse_counter (delayed by LATENCY=4) ---> coarse |
+//   clk ---> tdc_coarse_counter (delayed by LATENCY=6) ---> coarse |
 //                                                                  v
 //                                  tdc_hit_detect: trigger / confirm / dead time
 //                                                                  |  ev (coarse, fine)
@@ -39,7 +39,7 @@
 //   still full (m_valid && !m_ready), that hit is DROPPED and `overflow` pulses
 //   (counted in drop_cnt). Earlier data is never overwritten or corrupted.
 //
-// LATENCY hit -> m_valid: capture edge + 4 (sync + encoder) + 1 (detect)
+// LATENCY hit -> m_valid: capture edge + 6 (sync + encoder) + 1 (detect)
 //   + 1..2 (confirm "full") + 1 (LUT) + 1 (output reg) ~ 8-9 clk (32-36 ns).
 // =============================================================================
 `timescale 1ns/1fs
@@ -81,7 +81,7 @@ module tdc_top #(
     input  wire [FINE_W-1:0]          cal_addr,
     input  wire [PS_W-1:0]            cal_wdata
 );
-    localparam integer LATENCY = 4;    // must match tdc_frontend
+    localparam integer LATENCY = 6;    // must match tdc_frontend
 
     wire [2:0] rst_t;                  // pipelined reset, one tap per sub-block
     rst_tree #(.N(3)) u_rst (.clk(clk), .rst_in(rst), .rst(rst_t));

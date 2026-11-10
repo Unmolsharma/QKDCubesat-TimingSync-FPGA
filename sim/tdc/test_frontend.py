@@ -5,7 +5,7 @@ Toplevel: tdc_frontend. There's no hit detector yet, so the tests treat the
 rule tdc_hit_detect uses later.
 
 Output alignment: frontend outputs seen just after clock edge c describe the
-capture edge c-4 (LATENCY = 4). The sync-register contents seen after edge c
+capture edge c-6 (LATENCY = 6). The sync-register contents seen after edge c
 describe capture edge c-1.
 
 ALL RESULTS ARE SIMULATED (behavioural carry-chain model).
@@ -19,7 +19,7 @@ from cocotb.triggers import ClockCycles
 from tdc_tb import (HIT_W_DEFAULT, PS, T_CLK, config_name, edge_time,
                     out_dir, pulse_at, sample, start_clock, val)
 
-LATENCY = 4
+LATENCY = 6
 
 
 def n_taps(dut) -> int:

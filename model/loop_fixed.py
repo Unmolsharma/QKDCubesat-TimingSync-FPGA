@@ -142,7 +142,7 @@ class FixedCfg:
     # build parameters
     fps_nom: int = fps_from_hz(100e6)
     t_slot_ps: int = 10000          # nominal slot period, for residual_ps only
-    D: int = 23                     # NCO time lag behind the TDC coarse counter
+    D: int = 30                     # NCO time lag behind the TDC coarse counter
     J_LOOP: int = 24                # max cycles after its edge for a hit the loop uses
     J_MAX: int = 56                 # max cycles after its edge for a hit to be delivered
     W_STALE: int = 48               # stale hits: within this many cycles of the last loop hit

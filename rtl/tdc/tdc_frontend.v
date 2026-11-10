@@ -13,8 +13,8 @@
 // don't limit Fmax.
 //
 // Latency from the capture edge E (where the slice FFs sample the chain):
-//   E+1 sync stage, E+2..E+4 encoder  ->  outputs valid after edge E+4.
-//   LATENCY = 4 is exported so tdc_top can delay the coarse count to match.
+//   E+1 sync stage, E+2..E+6 encoder  ->  outputs valid after edge E+6.
+//   LATENCY = 6 is exported so tdc_top can delay the coarse count to match.
 // =============================================================================
 `timescale 1ns/1fs
 `default_nettype none
@@ -36,7 +36,7 @@ module tdc_frontend #(
     output wire              full
 );
     localparam integer N       = 4 * NUM_CARRY4;
-    localparam integer LATENCY = 4;               // capture edge -> outputs
+    localparam integer LATENCY = 6;               // capture edge -> outputs
     localparam integer GP      = (N + 5) / 6;     // partial-reduction groups
 
     wire [N-1:0] taps_q;     // stage 1 (in-slice capture FFs)
@@ -67,7 +67,7 @@ module tdc_frontend #(
         .count (fine)
     );
 
-    // ---- flag pipeline (3 stages, same as the encoder) ----
+    // ---- flag pipeline (5 stages, same as the encoder) ----
     // Pad with values that don't affect the result: 1 for AND, 0 for OR.
     // (The "+1" avoids a zero-width replication when N is a multiple of 6;
     // the extra MSB is simply truncated by the assignment.)
@@ -75,8 +75,9 @@ module tdc_frontend #(
     wire [6*GP-1:0] code_or  = {{(6*GP-N+1){1'b0}}, code};
 
     reg [GP-1:0] and_p = {GP{1'b0}}, or_p = {GP{1'b0}};
-    reg          t0_a = 1'b0, t0_b = 1'b0, t0_c = 1'b0;
-    reg          and_b = 1'b0, or_b = 1'b0, and_c = 1'b0, or_c = 1'b0;
+    reg          t0_a = 1'b0, t0_b = 1'b0;
+    reg          and_b = 1'b0, or_b = 1'b0;
+    reg [2:0]    and_d = 3'd0, or_d = 3'd0, t0_d = 3'd0;
     integer i;
 
     always @(posedge clk) begin
@@ -90,15 +91,15 @@ module tdc_frontend #(
         and_b <= &and_p;
         or_b  <= |or_p;
         t0_b  <= t0_a;
-        // stage 3: align with encoder output
-        and_c <= and_b;
-        or_c  <= or_b;
-        t0_c  <= t0_b;
+        // stages 3-5: align with encoder output
+        and_d <= {and_d[1:0], and_b};
+        or_d  <= {or_d[1:0], or_b};
+        t0_d  <= {t0_d[1:0], t0_b};
     end
 
-    assign t0   = t0_c;
-    assign zero = ~or_c;
-    assign full = and_c;
+    assign t0   = t0_d[2];
+    assign zero = ~or_d[2];
+    assign full = and_d[2];
 endmodule
 
 `default_nettype wire
