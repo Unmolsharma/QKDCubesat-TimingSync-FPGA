@@ -73,7 +73,7 @@ async def test_tdc_to_nco(dut):
     for _ in range(5):
         await RisingEdge(d.clk)
     d.rst.value = 0
-    for _ in range(30):
+    for _ in range(60):
         await RisingEdge(d.clk)
     await FallingEdge(d.clk)
     n0, P0 = val(d.t_nco), val(d.tlm_phase)
