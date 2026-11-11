@@ -25,13 +25,16 @@ def fake_netlist(top_has_ring=True):
         "u_mmcm": {
             "type": "MMCME2_BASE",
             "parameters": {"CLKFBOUT_MULT_F": "10.000000", "CLKOUT0_DIVIDE_F": "4.000000",
+                           "CLKOUT1_DIVIDE": "00000000000000000000000000010100",
                            "DIVCLK_DIVIDE": "00000000000000000000000000000001"},
-            "connections": {"CLKOUT0": [10]},
+            "connections": {"CLKOUT0": [10], "CLKOUT1": [14]},
         },
         "u_bufg": {"type": "BUFG", "parameters": {}, "connections": {"I": [10], "O": [11]}},
+        "u_bufg_ser": {"type": "BUFG", "parameters": {}, "connections": {"I": [14], "O": [15]}},
         "u_bufg_src": {"type": "BUFG", "parameters": {}, "connections": {"I": [12], "O": [13]}},
     }
-    netnames = {"clk": {"bits": [11]}, "clk_mmcm": {"bits": [10]}, "clk_src": {"bits": [13]}}
+    netnames = {"clk": {"bits": [11]}, "clk_mmcm": {"bits": [10]}, "clk_src": {"bits": [13]},
+                "clk_ser": {"bits": [15]}}
     if top_has_ring:
         cells["u_ro.u_ro_nand"] = {"type": "LUT2", "parameters": {}, "connections": {"O": [20]}}
         netnames["u_ro.ro"] = {"bits": [20]}
@@ -63,7 +66,21 @@ class XdcReading(unittest.TestCase):
 
     def test_unknown_statement_stops_the_build(self):
         with self.assertRaises(flow.FlowError):
-            flow.translate_statement("set_max_delay 3 -from a", fake_netlist(), {})
+            flow.translate_statement("set_input_delay 3 -clock a [get_ports b]", fake_netlist(), {})
+
+    def test_serial_clock_period_from_the_integer_divider(self):
+        periods = {"clk100": 10.0}
+        status, lines, _note = flow.translate_statement(
+            "create_generated_clock -name clk_ser [get_pins u_mmcm/CLKOUT1]", fake_netlist(), periods)
+        self.assertEqual(status, flow.TRANSLATED)
+        self.assertEqual(lines, ["create_clock -name clk_ser -period 20.000 [get_nets {clk_ser}]"])
+        self.assertAlmostEqual(periods["clk_ser"], 20.0)
+
+    def test_max_delay_between_clocks_is_reported_not_honored(self):
+        status, lines, _note = flow.translate_statement(
+            "set_max_delay -datapath_only -from [get_clocks clk_sys] -to [get_clocks clk_ser] 4.000",
+            fake_netlist(), {})
+        self.assertEqual((status, lines), (flow.DROPPED, []))
 
 
 class Translation(unittest.TestCase):

@@ -27,12 +27,20 @@
 // BURSTS: hits go into a FIFO (2^FIFO_AW entries, BRAM). When it is full, s_ready
 //   drops, and tdc_top then DROPS new hits and counts them (drop_cnt). Nothing
 //   already queued is overwritten, and every loss is reported in the next
-//   STATUS frame. STATUS frames go out every STATUS_PERIOD clocks (default
-//   2^26 = 0.27 s) and once after reset; when tlm_en is high a TELEMETRY
+//   STATUS frame. STATUS frames go out every STATUS_PERIOD serial clocks (the
+//   boards use 2^24 at 50 MHz = 0.34 s) and once after reset; when tlm_en is high a TELEMETRY
 //   frame follows each STATUS frame (tlm_data is sampled when it is queued).
 //
 // Dropping is decided by FIFO occupancy, which doesn't depend on a hit's fine
 // code, so drops don't bias a code-density histogram.
+//
+// TWO CLOCKS: the hit stream, the counters and the telemetry come from the fast
+// system clock `clk`; the framer and the transmitter run on the slow serial clock
+// `clk_ser` (50 MHz on the boards, from the same MMCM: CLKS_PER_BIT = 25 gives 2
+// Mbaud exactly). Hits cross in an async FIFO (async_fifo.v); the counters and
+// tlm_data cross as coherent snapshots (cdc_snapshot.v), refreshed every few
+// serial clocks. rb_* (command replies) and STATUS_PERIOD are on clk_ser. Tie both
+// clocks together for a single-clock build: the crossings work either way.
 // =============================================================================
 `timescale 1ns/1fs
 `default_nettype none
@@ -44,8 +52,10 @@ module tdc_uart_readout #(
     parameter integer CLKS_PER_BIT  = 125,
     parameter integer STATUS_PERIOD = 67108864
 )(
-    input  wire                clk,
+    input  wire                clk,          // system clock: s_*, counters, tlm_data
     input  wire                rst,
+    input  wire                clk_ser,      // serial clock: framer, tx, rb_*
+    input  wire                rst_ser,
     // timestamp stream from tdc_top
     input  wire                s_valid,
     output wire                s_ready,
@@ -70,30 +80,21 @@ module tdc_uart_readout #(
     localparam integer SRW = 173;                 // widest payload field (TELEMETRY)
     localparam [1:0] T_FINE = 2'd0, T_TS = 2'd1, T_STATUS = 2'd2, T_TLM = 2'd3;
 
-    // ---------------- FIFO ----------------
-    reg [DW-1:0]    fifo [0:(1<<FIFO_AW)-1];
-    reg [FIFO_AW:0] wr_ptr = 0, rd_ptr = 0;
-    reg [DW-1:0]    rd_data = {DW{1'b0}};
-    reg             rd_en;
+    // ---------------- FIFO (clk -> clk_ser) ----------------
+    wire [DW-1:0] rd_data;
+    wire          empty;
+    reg           rd_en;
+    async_fifo #(.DW(DW), .AW(FIFO_AW)) u_fifo (
+        .w_clk(clk), .w_rst(rst), .w_en(s_valid && s_ready), .w_data({s_coarse, s_fine}),
+        .w_ready(s_ready),
+        .r_clk(clk_ser), .r_rst(rst_ser), .r_en(rd_en), .r_data(rd_data), .r_empty(empty));
 
-    wire empty = (wr_ptr == rd_ptr);
-    wire full  = (wr_ptr[FIFO_AW] != rd_ptr[FIFO_AW]) &&
-                 (wr_ptr[FIFO_AW-1:0] == rd_ptr[FIFO_AW-1:0]);
-    assign s_ready = ~full & ~rst;
-
-    always @(posedge clk) begin
-        if (s_valid && s_ready)
-            fifo[wr_ptr[FIFO_AW-1:0]] <= {s_coarse, s_fine};
-        if (rd_en)
-            rd_data <= fifo[rd_ptr[FIFO_AW-1:0]];
-        if (rst) begin
-            wr_ptr <= 0;
-            rd_ptr <= 0;
-        end else begin
-            if (s_valid && s_ready) wr_ptr <= wr_ptr + 1'b1;
-            if (rd_en)              rd_ptr <= rd_ptr + 1'b1;
-        end
-    end
+    // ---------------- counters and telemetry (clk -> clk_ser) ----------------
+    wire [15:0]  drop_q, short_q, sat_q;
+    wire [172:0] tlm_q;
+    cdc_snapshot #(.W(48 + 173)) u_snap (
+        .clk_s(clk), .d_s({drop_cnt, short_cnt, sat_cnt, tlm_data}),
+        .clk_d(clk_ser), .q_d({drop_q, short_q, sat_q, tlm_q}));
 
     // ---------------- status timer ----------------
     reg [31:0] st_timer = 32'd0;
@@ -117,7 +118,7 @@ module tdc_uart_readout #(
     // busy registered (it gates the 173-bit shift register); start_d covers the
     // cycle in which the transmitter is already busy but busy_r doesn't show it yet
     reg        tx_busy_r = 1'b0;
-    always @(posedge clk) begin
+    always @(posedge clk_ser) begin
         tx_busy_r  <= tx_busy;
         tx_start_d <= tx_start;
     end
@@ -125,13 +126,13 @@ module tdc_uart_readout #(
     // Zero-extend into the fixed payload fields, then left-align in sr.
     wire [11:0] fine12 = rd_data[FINE_W-1:0];
     wire [60:0] ts61   = rd_data;
-    wire [53:0] st54   = {6'd0, drop_cnt, short_cnt, sat_cnt};
+    wire [53:0] st54   = {6'd0, drop_q, short_q, sat_q};
 
-    always @(*) rd_en = (fstate == F_IDLE) && !rb_due && !status_due && !tlm_due && !empty && !rst;
+    always @(*) rd_en = (fstate == F_IDLE) && !rb_due && !status_due && !tlm_due && !empty && !rst_ser;
 
-    always @(posedge clk) begin
+    always @(posedge clk_ser) begin
         tx_start <= 1'b0;
-        if (rst) begin
+        if (rst_ser) begin
             fstate     <= F_IDLE;
             st_timer   <= 32'd0;
             status_due <= 1'b1;
@@ -168,7 +169,7 @@ module tdc_uart_readout #(
                     fstate <= F_SEND;
                 end else if (tlm_due) begin
                     tlm_due <= 1'b0;
-                    sr      <= tlm_data;
+                    sr      <= tlm_q;
                     ftype   <= T_TLM;
                     nleft   <= 5'd25;
                     first   <= 1'b1;
@@ -212,8 +213,8 @@ module tdc_uart_readout #(
     end
 
     tdc_uart_tx #(.CLKS_PER_BIT(CLKS_PER_BIT)) u_tx (
-        .clk   (clk),
-        .rst   (rst),
+        .clk   (clk_ser),
+        .rst   (rst_ser),
         .start (tx_start),
         .data  (tx_data),
         .busy  (tx_busy),

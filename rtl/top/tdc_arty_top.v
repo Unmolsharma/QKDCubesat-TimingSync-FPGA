@@ -1,7 +1,8 @@
 // =============================================================================
 // tdc_arty_top.v  --  board wrapper for the Digilent Arty A7-100T
 // -----------------------------------------------------------------------------
-//   CLK100MHZ -> MMCM (x10 / 4) -> 250 MHz system clock
+//   CLK100MHZ -> MMCM (x10 / 4)  -> 250 MHz system clock (TDC)
+//                     (x10 / 20) ->  50 MHz serial clock (UART framer, transmitter)
 //   ja[0] (Pmod JA pin 1)  : external hit input (LVCMOS33)
 //   sw[0] : hit source      0 = external (Pmod JA1), 1 = on-chip ring oscillator
 //   sw[1] : UART mode       0 = fine codes only (code density), 1 = full timestamps
@@ -27,9 +28,10 @@ module tdc_arty_top #(
     parameter real    MMCM_MULT     = 10.0,
     parameter real    MMCM_OUT_DIV  = 4.0,
     parameter         LUT_FILE      = "",
-    parameter integer CLKS_PER_BIT  = 125,       // 250 MHz / 2 Mbaud
+    parameter integer MMCM_SER_DIV  = 20,        // serial clock: 1000 MHz VCO / 20 = 50 MHz
+    parameter integer CLKS_PER_BIT  = 25,        // 50 MHz / 2 Mbaud
     parameter integer FIFO_AW       = 9,
-    parameter integer STATUS_PERIOD = 67108864,  // 0.27 s
+    parameter integer STATUS_PERIOD = 16777216,  // serial clocks: 0.34 s
     parameter integer RO_DIV_BITS   = 12,
     // simulation-only model knobs (passed down to the delay line)
     parameter real    TAP_NOM_PS    = 22.0,
@@ -46,40 +48,54 @@ module tdc_arty_top #(
     localparam integer FINE_W = 9, COARSE_W = 48, PS_W = 16;
 
     // ---------------- clocking ----------------
-    wire clk, locked;
+    wire clk, clk_ser, locked;
 
 `ifdef SYNTHESIS
-    wire clk_fb, clk_mmcm;
+    wire clk_fb, clk_mmcm, clk_ser_mmcm;
     MMCME2_BASE #(
         .CLKIN1_PERIOD    (10.0),
         .CLKFBOUT_MULT_F  (MMCM_MULT),
         .DIVCLK_DIVIDE    (1),
-        .CLKOUT0_DIVIDE_F (MMCM_OUT_DIV)
+        .CLKOUT0_DIVIDE_F (MMCM_OUT_DIV),
+        .CLKOUT1_DIVIDE   (MMCM_SER_DIV)
     ) u_mmcm (
         .CLKIN1   (CLK100MHZ),
         .CLKFBIN  (clk_fb),
         .CLKFBOUT (clk_fb),
         .CLKOUT0  (clk_mmcm),
+        .CLKOUT1  (clk_ser_mmcm),
         .LOCKED   (locked),
         .PWRDWN   (1'b0),
         .RST      (1'b0),
-        .CLKFBOUTB(), .CLKOUT0B(), .CLKOUT1(), .CLKOUT1B(), .CLKOUT2(),
+        .CLKFBOUTB(), .CLKOUT0B(), .CLKOUT1B(), .CLKOUT2(),
         .CLKOUT2B(), .CLKOUT3(), .CLKOUT3B(), .CLKOUT4(), .CLKOUT5(), .CLKOUT6()
     );
     BUFG u_bufg (.I(clk_mmcm), .O(clk));
+    BUFG u_bufg_ser (.I(clk_ser_mmcm), .O(clk_ser));
 `else
-    // Simulation stand-in for the MMCM: an independent 250 MHz clock.
-    reg clk_sim = 1'b0;
+    // Simulation stand-in for the MMCM: 250 MHz and 50 MHz, edges aligned.
+    reg clk_sim = 1'b0, clk_ser_sim = 1'b0;
     reg locked_sim = 1'b0;
     always #(2.0) clk_sim = ~clk_sim;
+    always #(10.0) clk_ser_sim = ~clk_ser_sim;
     initial #(100.0) locked_sim = 1'b1;
     assign clk = clk_sim;
+    assign clk_ser = clk_ser_sim;
     assign locked = locked_sim;
 `endif
 
+    // ---------------- serial clock domain: reset ----------------
+    (* ASYNC_REG = "TRUE" *) reg [2:0] rst_ser_sync = 3'b111;
+    reg rst_ser = 1'b1;
+    always @(posedge clk_ser or negedge locked)
+        if (!locked) rst_ser_sync <= 3'b111;
+        else         rst_ser_sync <= {rst_ser_sync[1:0], ~ck_rst};
+    always @(posedge clk_ser) rst_ser <= rst_ser_sync[2];
+
     // ---------------- reset + switch synchronisers ----------------
     (* ASYNC_REG = "TRUE" *) reg [2:0] rst_sync = 3'b111;
-    (* ASYNC_REG = "TRUE" *) reg [1:0] sw0_s = 2'b00, sw1_s = 2'b00;
+    (* ASYNC_REG = "TRUE" *) reg [1:0] sw0_s = 2'b00;
+    (* ASYNC_REG = "TRUE" *) reg [1:0] sw1_s = 2'b00;   // serial clock domain
     always @(posedge clk or negedge locked)
         if (!locked) rst_sync <= 3'b111;
         else         rst_sync <= {rst_sync[1:0], ~ck_rst};
@@ -87,10 +103,8 @@ module tdc_arty_top #(
     rst_tree #(.N(3)) u_rst (.clk(clk), .rst_in(rst_sync[2]), .rst(rst_t));
     wire rst_tdc = rst_t[0], rst_uart = rst_t[1], rst_led = rst_t[2];
 
-    always @(posedge clk) begin
-        sw0_s <= {sw0_s[0], sw[0]};
-        sw1_s <= {sw1_s[0], sw[1]};
-    end
+    always @(posedge clk)     sw0_s <= {sw0_s[0], sw[0]};
+    always @(posedge clk_ser) sw1_s <= {sw1_s[0], sw[1]};
 
     // ---------------- hit source ----------------
     wire ro_hit;
@@ -150,6 +164,8 @@ module tdc_arty_top #(
     ) u_uart (
         .clk       (clk),
         .rst       (rst_uart),
+        .clk_ser   (clk_ser),
+        .rst_ser   (rst_ser),
         .s_valid   (m_valid),
         .s_ready   (m_ready),
         .s_coarse  (m_raw[FINE_W +: COARSE_W]),

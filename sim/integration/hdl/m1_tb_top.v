@@ -8,7 +8,7 @@
 module m1_tb_top #(
     parameter real    PPM           = 20.0,
     parameter real    DRIFT_PPM_S   = 0.0,
-    parameter integer STATUS_PERIOD = 50000,
+    parameter integer STATUS_PERIOD = 10000,     // serial clocks (50 MHz): 200 us
     parameter integer SEED          = 1
 )(
     input  wire       ck_rst,

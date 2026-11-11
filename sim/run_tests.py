@@ -42,7 +42,7 @@ SUITES = {
     "frontend": ("tdc", "test_frontend", "tdc_frontend", {}),
     "top":      ("tdc", "test_top", "tdc_top", {}),
     "uart":     ("tdc", "test_uart", "tdc_arty_top",
-                 {"FIFO_AW": 3, "STATUS_PERIOD": 50000, "RO_DIV_BITS": 4}),
+                 {"FIFO_AW": 3, "STATUS_PERIOD": 10000, "RO_DIV_BITS": 4}),
     # block 2: 100 MHz source (M1) and 500 MHz source (M2)
     "nco":      ("nco", "test_nco", "nco_tb_top", {}, {"NCO_FSRC": "100e6"}),
     "nco500":   ("nco", "test_nco", "nco_tb_top", {"F_SRC_HZ": 500000000, "T_SLOT_PS": 2000},

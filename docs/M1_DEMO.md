@@ -133,7 +133,7 @@ and an unknown command are rejected.
 
 ## What the UART shows
 
-Every 0.27 s: one STATUS frame (TDC `drop`/`short`/`sat`, all must be 0) and
+Every 0.34 s: one STATUS frame (TDC `drop`/`short`/`sat`, all must be 0) and
 one TELEMETRY frame:
 
 | Field | Meaning |

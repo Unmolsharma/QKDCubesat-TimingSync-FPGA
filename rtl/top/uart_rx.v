@@ -1,7 +1,7 @@
 // =============================================================================
 // uart_rx.v  --  minimal 8N1 UART receiver (PC -> FPGA commands)
 // -----------------------------------------------------------------------------
-// CLKS_PER_BIT = f_clk / baud (125: 2 000 000 baud from 250 MHz, the same
+// CLKS_PER_BIT = f_clk / baud (25: 2 000 000 baud from the 50 MHz serial clock, the same
 // rate as the transmit side). The line is synchronised with two FFs, a start
 // bit is a falling edge that is still low half a bit later, and every data
 // bit is sampled at its centre. A missing stop bit drops the byte and counts

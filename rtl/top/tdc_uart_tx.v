@@ -1,8 +1,8 @@
 // =============================================================================
 // tdc_uart_tx.v  --  minimal 8N1 UART transmitter
 // -----------------------------------------------------------------------------
-// CLKS_PER_BIT = f_clk / baud. The default 125 gives exactly 2 000 000 baud from
-// 250 MHz (0 % rate error). The Arty's FT2232H generates 2 Mbaud exactly
+// CLKS_PER_BIT = f_clk / baud. 125 gives exactly 2 000 000 baud from 250 MHz, 25
+// from the boards' 50 MHz serial clock (0 % rate error). The Arty's FT2232H generates 2 Mbaud exactly
 // (3 MHz / 1.5), so both ends agree perfectly.
 // Pulse `start` for one cycle while !busy; `data` is sampled on that cycle.
 // =============================================================================

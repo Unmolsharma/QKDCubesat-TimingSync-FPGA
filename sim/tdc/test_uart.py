@@ -6,7 +6,7 @@ is compared with the timestamps seen on tdc_top's internal valid/ready
 interface.
 
 Build parameters for this suite (run_tests.py): FIFO_AW=3 (8 entries, so
-bursts overflow quickly), STATUS_PERIOD=50000 clk (200 us), RO_DIV_BITS=4.
+bursts overflow quickly), STATUS_PERIOD=10000 serial clocks (200 us), RO_DIV_BITS=4.
 
 ALL RESULTS ARE SIMULATED.
 """

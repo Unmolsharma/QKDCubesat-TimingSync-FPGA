@@ -112,10 +112,14 @@ class Netlist:
                 return cell["connections"]["O"][0]
         return bit
 
-    def mmcm_clkout0_period_ns(self, cell, input_period_ns):
+    def mmcm_clkout_period_ns(self, cell, pin, input_period_ns):
+        """Period of MMCM output CLKOUT0 (fractional divider) or CLKOUT1..6 (integer)."""
         params = self.cells[cell]["parameters"]
         mult = float(params["CLKFBOUT_MULT_F"])
-        out_div = float(params["CLKOUT0_DIVIDE_F"])
+        if pin == "CLKOUT0":
+            out_div = float(params["CLKOUT0_DIVIDE_F"])
+        else:
+            out_div = int(params.get(f"{pin}_DIVIDE", "1"), 2)
         in_div = int(params.get("DIVCLK_DIVIDE", "1"), 2)
         return input_period_ns * in_div * out_div / mult
 
@@ -183,13 +187,17 @@ def translate_statement(statement, netlist, clock_periods):
         pin = re.search(r"\[get_pins\s+(\w+)/(\w+)\]", s)
         cell, pin_name = pin.group(1), pin.group(2)
         net = netlist.clock_net_of_pin(cell, pin_name)
-        period = netlist.mmcm_clkout0_period_ns(cell, clock_periods["clk100"])
+        period = netlist.mmcm_clkout_period_ns(cell, pin_name, clock_periods["clk100"])
         clock_periods[name] = period
         return (
             TRANSLATED,
             [f"create_clock -name {name} -period {period:.3f} [get_nets {{{net}}}]"],
             f"period computed from the MMCM parameters, on net {net}",
         )
+
+    if s.startswith("set_max_delay"):
+        return DROPPED, [], ("no max-delay constraints in nextpnr: the clk_sys <-> clk_ser crossings are "
+                             "listed separately in sta.rpt ('Paths between clocks') and not checked")
 
     if s.startswith("set_clock_groups"):
         return UNNEEDED, [], "nextpnr only reports the delay of paths between clocks (`Max delay` in nextpnr.log)"

@@ -18,6 +18,16 @@ create_clock -name clk100 -period 10.000 [get_ports CLK100MHZ]
 ## default MULT=10 / DIV=4). This only gives it a readable name for the
 ## reports.
 create_generated_clock -name clk_sys [get_pins u_mmcm/CLKOUT0]
+## 50 MHz serial clock (UART framer/transmitter, settings registers): VCO / 20.
+create_generated_clock -name clk_ser [get_pins u_mmcm/CLKOUT1]
+
+## clk_sys <-> clk_ser crossings. They are phase-related (same MMCM), but every
+## crossing is built as an asynchronous one (rtl/top/async_fifo.v: gray pointers;
+## rtl/top/cdc_snapshot.v: toggle handshake, data stable >= 2 destination cycles),
+## so they are not timed as synchronous paths. -datapath_only bounds the data/pointer
+## skew to one fast period and drops the hold check on these paths.
+set_max_delay -datapath_only -from [get_clocks clk_sys] -to [get_clocks clk_ser] 4.000
+set_max_delay -datapath_only -from [get_clocks clk_ser] -to [get_clocks clk_sys] 4.000
 
 ## Ring oscillator (sw0 hit source). The divider FFs are clocked by the ring,
 ## so give it a clock so they are timed at all. The period is a conservative

@@ -165,8 +165,13 @@ check.
 
 ### Hardware readout
 
-- **UART:** 2 000 000 baud 8N1. That is exact from 250 MHz (divisor 125), and the
-  FT2232H generates it exactly too. Throughput is 200 kB/s: ~100 k fine codes/s or
+- **UART:** 2 000 000 baud 8N1, on its own 50 MHz serial clock from the same MMCM
+  (divisor 25: exact), and the FT2232H generates it exactly too. The UART receiver,
+  the NCO settings registers and the UART framer/transmitter run on that clock; the
+  TDC, NCO and LEDs stay at 250 MHz. Raw timestamps cross in an async FIFO
+  (`rtl/top/async_fifo.v`, gray pointers); counters, telemetry and the settings
+  cross as coherent snapshots (`rtl/top/cdc_snapshot.v`, toggle handshake).
+  `scripts/build.tcl` constrains the crossings with `set_max_delay -datapath_only`. Throughput is 200 kB/s: ~100 k fine codes/s or
   ~22 k full timestamps/s.
 - **Framing** is self-synchronising: only header bytes have bit 7 set, so the PC can
   join mid-stream.
@@ -175,7 +180,7 @@ check.
   |---|---|---|
   | 0 FINE | 2 | fine code |
   | 1 TIMESTAMP | 9 | {coarse (48 bit), fine} (7 bytes / 32-bit coarse in v0.1) |
-  | 2 STATUS | 8 | drop / short / sat counters; every 0.27 s and after reset |
+  | 2 STATUS | 8 | drop / short / sat counters; every 0.34 s and after reset |
   | 3 TELEMETRY | 25 | block 2 loop state, frequency, error averages, counters (M1 top) |
 
   Header byte `1TTPPPPP`, continuation bytes `0PPPPPPP`, payload MSB first. Parsed

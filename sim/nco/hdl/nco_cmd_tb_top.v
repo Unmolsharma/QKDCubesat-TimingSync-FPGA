@@ -60,7 +60,8 @@ module nco_cmd_tb_top #(
         .slip_unlock(c_slip_unlock), .cmd_cnt(), .err_cnt());
     tdc_uart_readout #(.COARSE_W(48), .FINE_W(9), .FIFO_AW(3), .CLKS_PER_BIT(125),
                        .STATUS_PERIOD(32'h7FFF_FFFF)) u_tx (
-        .clk(clk), .rst(rst), .s_valid(1'b0), .s_ready(), .s_coarse(48'd0), .s_fine(9'd0),
+        .clk(clk), .rst(rst), .clk_ser(clk), .rst_ser(rst),   // one clock: the crossings work either way
+        .s_valid(1'b0), .s_ready(), .s_coarse(48'd0), .s_fine(9'd0),
         .mode_ts(1'b0), .drop_cnt(16'd0), .short_cnt(16'd0), .sat_cnt(16'd0),
         .tlm_en(1'b0), .tlm_data(173'd0), .rb_valid(rb_valid), .rb_data(rb_data),
         .tx(uart_tx_line));

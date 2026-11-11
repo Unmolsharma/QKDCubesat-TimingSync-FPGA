@@ -32,7 +32,12 @@
 //
 // UART (2 Mbaud): STATUS frame (TDC drop/short/sat) + TELEMETRY frame (lock
 // state, gear, frequency offset, error averages, counters) every
-// STATUS_PERIOD clocks (0.27 s); scripts/capture.py --tlm-out decodes them.
+// STATUS_PERIOD serial clocks (0.34 s); scripts/capture.py --tlm-out decodes them.
+//
+// CLOCKS: 250 MHz (TDC, NCO, LEDs) and 50 MHz serial (UART receive, settings
+// registers, UART framer and transmitter), both from the MMCM. Crossings: raw
+// timestamps through an async FIFO, counters + telemetry and the settings as
+// coherent snapshots (rtl/top/cdc_snapshot.v).
 // See docs/M1_DEMO.md for the procedure and pass criteria.
 // =============================================================================
 `timescale 1ns/1fs
@@ -44,9 +49,10 @@ module m1_arty_top #(
     parameter integer F_SRC_HZ      = 100000000,
     parameter integer T_SLOT_PS     = 10000,
     parameter         LUT_FILE      = "",
-    parameter integer CLKS_PER_BIT  = 125,
+    parameter integer MMCM_SER_DIV  = 20,          // serial clock: 1000 MHz VCO / 20 = 50 MHz
+    parameter integer CLKS_PER_BIT  = 25,          // 50 MHz / 2 Mbaud
     parameter integer FIFO_AW       = 9,
-    parameter integer STATUS_PERIOD = 67108864,
+    parameter integer STATUS_PERIOD = 16777216,    // serial clocks: 0.34 s
     // simulation-only model knobs (behavioural delay line)
     parameter real    TAP_NOM_PS    = 22.0,
     parameter real    JITTER_PS     = 4.0,
@@ -67,28 +73,39 @@ module m1_arty_top #(
     localparam [47:0]  FPS_NOM = FPS_X[47:0];
 
     // ---------------- clocking ----------------
-    wire clk, locked, clk_src;
+    wire clk, clk_ser, locked, clk_src;
 `ifdef SYNTHESIS
-    wire clk_fb, clk_mmcm;
+    wire clk_fb, clk_mmcm, clk_ser_mmcm;
     MMCME2_BASE #(
         .CLKIN1_PERIOD(10.0), .CLKFBOUT_MULT_F(MMCM_MULT), .DIVCLK_DIVIDE(1),
-        .CLKOUT0_DIVIDE_F(MMCM_OUT_DIV)
+        .CLKOUT0_DIVIDE_F(MMCM_OUT_DIV), .CLKOUT1_DIVIDE(MMCM_SER_DIV)
     ) u_mmcm (
         .CLKIN1(CLK100MHZ), .CLKFBIN(clk_fb), .CLKFBOUT(clk_fb), .CLKOUT0(clk_mmcm),
-        .LOCKED(locked), .PWRDWN(1'b0), .RST(1'b0),
-        .CLKFBOUTB(), .CLKOUT0B(), .CLKOUT1(), .CLKOUT1B(), .CLKOUT2(),
+        .CLKOUT1(clk_ser_mmcm), .LOCKED(locked), .PWRDWN(1'b0), .RST(1'b0),
+        .CLKFBOUTB(), .CLKOUT0B(), .CLKOUT1B(), .CLKOUT2(),
         .CLKOUT2B(), .CLKOUT3(), .CLKOUT3B(), .CLKOUT4(), .CLKOUT5(), .CLKOUT6());
     BUFG u_bufg (.I(clk_mmcm), .O(clk));
+    BUFG u_bufg_ser (.I(clk_ser_mmcm), .O(clk_ser));
     // emulator clock: dedicated clock input -> global buffer
     BUFG u_bufg_src (.I(jb[0]), .O(clk_src));
 `else
-    reg clk_sim = 1'b0, locked_sim = 1'b0;
+    reg clk_sim = 1'b0, clk_ser_sim = 1'b0, locked_sim = 1'b0;
     always #(2.0) clk_sim = ~clk_sim;
+    always #(10.0) clk_ser_sim = ~clk_ser_sim;
     initial #(100.0) locked_sim = 1'b1;
     assign clk = clk_sim;
+    assign clk_ser = clk_ser_sim;
     assign locked = locked_sim;
     assign clk_src = jb[0];           // the testbench drives an offset/drifting clock
 `endif
+
+    // ---------------- serial clock domain (UART, settings): reset ----------------
+    (* ASYNC_REG = "TRUE" *) reg [2:0] rst_ser_sync = 3'b111;
+    reg rst_ser = 1'b1;
+    always @(posedge clk_ser or negedge locked)
+        if (!locked) rst_ser_sync <= 3'b111;
+        else         rst_ser_sync <= {rst_ser_sync[1:0], ~ck_rst};
+    always @(posedge clk_ser) rst_ser <= rst_ser_sync[2];
 
     // ---------------- reset + switch synchronisers (250 MHz side) ----------------
     (* ASYNC_REG = "TRUE" *) reg [2:0] rst_sync = 3'b111;
@@ -96,9 +113,9 @@ module m1_arty_top #(
     always @(posedge clk or negedge locked)
         if (!locked) rst_sync <= 3'b111;
         else         rst_sync <= {rst_sync[1:0], ~ck_rst};
-    wire [4:0] rst_t;
-    rst_tree #(.N(5)) u_rst (.clk(clk), .rst_in(rst_sync[2]), .rst(rst_t));
-    wire rst_tdc = rst_t[0], rst_nco = rst_t[1], rst_cfg = rst_t[2], rst_uart = rst_t[3], rst_led = rst_t[4];
+    wire [3:0] rst_t;
+    rst_tree #(.N(4)) u_rst (.clk(clk), .rst_in(rst_sync[2]), .rst(rst_t));
+    wire rst_tdc = rst_t[0], rst_nco = rst_t[1], rst_uart = rst_t[2], rst_led = rst_t[3];
     always @(posedge clk) sw3_s <= {sw3_s[0], sw[3]};
 
     // ---------------- satellite emulator (its own clock domain) ----------------
@@ -135,27 +152,48 @@ module m1_arty_top #(
         .rej_cnt(), .coarse_now(coarse_now),
         .cal_we(1'b0), .cal_addr({FINE_W{1'b0}}), .cal_wdata({PS_W{1'b0}}));
 
-    // ---------------- PC command interface: NCO runtime settings ----------------
+    // ---------------- PC command interface: NCO runtime settings (serial clock) ----------------
+    // The settings cross to the 250 MHz side as one coherent snapshot (cdc_snapshot),
+    // a few serial clocks after a write; nco_top reads them on every hit.
     wire        rx_valid;
     wire [7:0]  rx_data;
     wire        rb_valid;
     wire [172:0] rb_data;
+    wire [3:0]  s_kp_acq, s_kp_trk, s_gear, s_mse, s_mse_trk;
+    wire        s_gate_en, s_tau_en, s_slip_unlock;
+    wire [15:0] s_gate_thr, s_slip_thr;
+    wire [31:0] s_lock, s_unlock;
+    wire [7:0]  s_rej;
+    wire [4:0]  s_to, s_tau;
+    uart_rx #(.CLKS_PER_BIT(CLKS_PER_BIT)) u_rx (
+        .clk(clk_ser), .rst(rst_ser), .rx(uart_txd_in), .valid(rx_valid), .data(rx_data), .frame_err());
+    nco_cfg_regs #(.IDLE_TIMEOUT(5000)) u_cfg (          // 100 us at 50 MHz
+        .clk(clk_ser), .rst(rst_ser), .rx_valid(rx_valid), .rx_data(rx_data),
+        .rb_valid(rb_valid), .rb_data(rb_data),
+        .kp_acq(s_kp_acq), .kp_trk(s_kp_trk), .gear_log2(s_gear), .gate_en(s_gate_en),
+        .gate_thr(s_gate_thr), .mse_shift(s_mse), .mse_shift_trk(s_mse_trk),
+        .lock_thr(s_lock), .unlock_thr(s_unlock), .rej_max(s_rej), .to_shift(s_to),
+        .tau_ovr_en(s_tau_en), .tau_ovr(s_tau), .slip_thr(s_slip_thr),
+        .slip_unlock(s_slip_unlock), .cmd_cnt(), .err_cnt());
+
+    localparam integer CFG_W = 4*5 + 3 + 16*2 + 32*2 + 8 + 5*2;
+    // reset values of nco_cfg_regs, so the NCO sees the defaults from the first cycle
+    localparam [CFG_W-1:0] CFG_INIT = {4'd2, 4'd6, 4'd6, 4'd5, 4'd7, 1'b1, 1'b0, 1'b1,
+                                       16'h2000, 16'h2000, 32'h0400_0000, 32'h1000_0000,
+                                       8'd16, 5'd5, 5'd0};
     wire [3:0]  c_kp_acq, c_kp_trk, c_gear, c_mse, c_mse_trk;
     wire        c_gate_en, c_tau_en, c_slip_unlock;
     wire [15:0] c_gate_thr, c_slip_thr;
     wire [31:0] c_lock, c_unlock;
     wire [7:0]  c_rej;
     wire [4:0]  c_to, c_tau;
-    uart_rx #(.CLKS_PER_BIT(CLKS_PER_BIT)) u_rx (
-        .clk(clk), .rst(rst_cfg), .rx(uart_txd_in), .valid(rx_valid), .data(rx_data), .frame_err());
-    nco_cfg_regs u_cfg (
-        .clk(clk), .rst(rst_cfg), .rx_valid(rx_valid), .rx_data(rx_data),
-        .rb_valid(rb_valid), .rb_data(rb_data),
-        .kp_acq(c_kp_acq), .kp_trk(c_kp_trk), .gear_log2(c_gear), .gate_en(c_gate_en),
-        .gate_thr(c_gate_thr), .mse_shift(c_mse), .mse_shift_trk(c_mse_trk),
-        .lock_thr(c_lock), .unlock_thr(c_unlock), .rej_max(c_rej), .to_shift(c_to),
-        .tau_ovr_en(c_tau_en), .tau_ovr(c_tau), .slip_thr(c_slip_thr),
-        .slip_unlock(c_slip_unlock), .cmd_cnt(), .err_cnt());
+    cdc_snapshot #(.W(CFG_W), .INIT(CFG_INIT)) u_cfg_cdc (
+        .clk_s(clk_ser),
+        .d_s({s_kp_acq, s_kp_trk, s_gear, s_mse, s_mse_trk, s_gate_en, s_tau_en, s_slip_unlock,
+              s_gate_thr, s_slip_thr, s_lock, s_unlock, s_rej, s_to, s_tau}),
+        .clk_d(clk),
+        .q_d({c_kp_acq, c_kp_trk, c_gear, c_mse, c_mse_trk, c_gate_en, c_tau_en, c_slip_unlock,
+              c_gate_thr, c_slip_thr, c_lock, c_unlock, c_rej, c_to, c_tau}));
 
     // ---------------- NCO (block 2), settings from nco_cfg_regs ----------------
     wire               nco_valid, nco_locked, nco_noise;
@@ -192,13 +230,14 @@ module m1_arty_top #(
     wire [172:0] tlm = {st, kp, L, foff8[31:0], mse[31:16], sgn8[15:0],
                         unlock_cnt, abort_cnt, suspect_cnt, noise_cnt, late_cnt, hit_cnt, 2'b00};
 
-    // ---------------- UART ----------------
+    // ---------------- UART (framer and transmitter on the serial clock) ----------------
+    wire ts_room;                     // raw timestamps are best effort: skipped when full
     tdc_uart_readout #(
         .COARSE_W(COARSE_W), .FINE_W(FINE_W), .FIFO_AW(FIFO_AW),
         .CLKS_PER_BIT(CLKS_PER_BIT), .STATUS_PERIOD(STATUS_PERIOD)
     ) u_uart (
-        .clk(clk), .rst(rst_uart),
-        .s_valid(tdc_valid & tdc_ready & sw3_s[1]), .s_ready(),
+        .clk(clk), .rst(rst_uart), .clk_ser(clk_ser), .rst_ser(rst_ser),
+        .s_valid(tdc_valid & tdc_ready & sw3_s[1] & ts_room), .s_ready(ts_room),
         .s_coarse(m_raw[FINE_W +: COARSE_W]), .s_fine(m_raw[FINE_W-1:0]),
         .mode_ts(1'b1), .drop_cnt(drop_cnt), .short_cnt(short_cnt), .sat_cnt(sat_cnt),
         .tlm_en(1'b1), .tlm_data(tlm), .rb_valid(rb_valid), .rb_data(rb_data),
