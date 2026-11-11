@@ -132,8 +132,8 @@ def merge(c, fine, ch, slot, cfg, n_ch=NUM_QUANTUM + 1):
             cc, ff, chn, sl = out
             a = t - 1 - D       # t_nco in this cycle (nco_top: t_nco[x] = time_now[x-1] - D)
             n, kind = adm.offer(cc, a)
-            # an admitted hit leaves at its release; a late one after the 3 admission stages
-            fifo.append(t + 3 if kind == lfx.LATE else n + D + 1)
+            # an admitted hit leaves at its release; a late one after the 4 admission stages
+            fifo.append(t + 4 if kind == lfx.LATE else n + D + 1)
             peak = max(peak, len(fifo))
             hits.append(lfx.Hit(cc, ff, a, chn))
             truth.append(sl)

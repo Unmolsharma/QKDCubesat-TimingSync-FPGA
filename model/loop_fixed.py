@@ -67,7 +67,7 @@ E_FRAC = 24
 MSE_INIT = (1 << 32) // 12               # 1/12: what random phase gives
 ACQ, RAMP, LOCK = 0, 1, 2
 # Pipeline latencies in cycles (see TIMING above and rtl/nco/nco_top.v)
-ALIGN_LAT = 9            # nco_align input -> earliest pop (3 admission stages + 6)
+ALIGN_LAT = 10           # nco_align input -> earliest pop (4 admission stages + 6)
 E_LAT, F_LAT = 7, 13     # pop -> E stage, pop -> F stage
 DP_LAT, DF_LAT = 18, 15  # pop -> correction visible in P, in fps
 EXT_DP_LAT, EXT_DF_LAT = 7, 4
@@ -142,7 +142,7 @@ class FixedCfg:
     # build parameters
     fps_nom: int = fps_from_hz(100e6)
     t_slot_ps: int = 10000          # nominal slot period, for residual_ps only
-    D: int = 30                     # NCO time lag behind the TDC coarse counter
+    D: int = 31                     # NCO time lag behind the TDC coarse counter
     J_LOOP: int = 24                # max cycles after its edge for a hit the loop uses
     J_MAX: int = 56                 # max cycles after its edge for a hit to be delivered
     W_STALE: int = 48               # stale hits: within this many cycles of the last loop hit

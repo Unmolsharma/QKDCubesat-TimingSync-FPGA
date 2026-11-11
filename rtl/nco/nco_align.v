@@ -5,7 +5,7 @@
 //   The NCO is a real-time counter: its phase register only holds the value
 //   for "now". A timestamp {c, fine} describes a moment just before clock
 //   edge c, but the TDC delivers it ~10 clocks later. So the NCO's own time
-//   axis, t_nco, runs D clocks BEHIND the TDC's coarse counter (D = 30), and
+//   axis, t_nco, runs D clocks BEHIND the TDC's coarse counter (D = 31), and
 //   this FIFO holds each timestamp until t_nco reaches c. At that moment the
 //   phase register holds exactly phase(edge c), and the phase detector
 //   interpolates back by fine_ps.
@@ -13,7 +13,7 @@
 // RELEASE RULE (one hit per POP_GAP cycles at most)
 //   A hit that arrives in cycle a (s_valid && s_ready, t_nco = a) is released
 //   ("popped") in cycle
-//        n = max(c, a + 9, n_prev + POP_GAP)
+//        n = max(c, a + 10, n_prev + POP_GAP)
 //   n_prev being the previous release. Usually n = c (j = 0). If the hit is
 //   released j = n - c cycles late (two channels with the same coarse time, a
 //   burst), the timestamp is rewritten exactly as
@@ -42,9 +42,10 @@
 //   so the recurrence is a 9-bit compare and add, not 48 bits.
 //     a      s_coarse - t_lead, two 24-bit halves (registered: i1)
 //     a+1    x, saturated (i2)
-//     a+2    constants that depend on x only (i3)
-//     a+3    decision; write into the FIFO at the end of the cycle
-//   so the earliest release is (a + 3) + 6 = a + 9 (ALIGN_LAT in loop_fixed.py).
+//     a+2    constants that depend on x only, each one add or compare (i3)
+//     a+3    decision (only the q/r recurrence here), registered
+//     a+4    write into the FIFO; late pulse and count
+//   so the earliest release is (a + 4) + 6 = a + 10 (ALIGN_LAT in loop_fixed.py).
 //
 //   POP_GAP = 8 is what keeps the control stages hazard-free: the loop's
 //   state updates are visible 8 cycles after E (nco_top), so every hit sees the
@@ -144,28 +145,29 @@ module nco_align #(
         else            x2 <= i1_hi[HI-1] ? -9'sd128 : 9'sd127;   // far out of range either way
     end
 
-    // ---- a+2: constants of x alone (i3). xd = t_lead[a+3] - c = x + 3 ----
-    // With q = n_prev - t_nco[a+3]:  j = max(0, xd + 2, q + xd + 4).
-    //   j > J_MAX  <=> xd > J_MAX - 2  || q > J_MAX - 4 - xd
-    //   j > J_LOOP <=> xd > J_LOOP - 2 || q > J_LOOP - 4 - xd
-    //   q next cycle, if admitted: n - t_nco[a+4] = j - xd + 3 = max(3 - xd, 5, q + 7)
-    //   c - c_loop = r - xd  (r = t_lead[a+3] - c_loop); r next cycle, if a loop hit: xd + 1
+    // ---- a+2: constants of x alone (i3), straight from x (one add or compare each).
+    // xd = t_lead[a+3] - c = x + 3. The write is at the end of a+4, so n >= a + 10 = c +
+    // xd + 3, and with q = n_prev - t_nco[a+3]:  j = max(0, xd + 3, q + xd + 4).
+    //   j > J_MAX  <=> x > J_MAX - 6  || q > J_MAX - 7 - x
+    //   j > J_LOOP <=> x > J_LOOP - 6 || q > J_LOOP - 7 - x
+    //   q next cycle, if admitted: n - t_nco[a+4] = j - xd + 3 = max(-x, 6, q + 7)
+    //   c - c_loop = r - xd  (r = t_lead[a+3] - c_loop); r next cycle, if a loop hit: x + 4
     reg signed [9:0] k_max = 10'sd0, k_loop = 10'sd0, p_m7 = 10'sd0, p_q = 10'sd0;
     reg signed [9:0] xw = 10'sd0, x_r = 10'sd0;
     reg              h_max = 1'b0, h_loop = 1'b0;
-    wire signed [9:0] xd = x2 + 10'sd3;
-    wire signed [9:0] p3 = 10'sd3 - xd;
+    wire signed [9:0] x10 = x2;
+    wire              p_big = x10 < -10'sd6;          // -x > 6
     always @(posedge clk) begin
         i3_v   <= i2_v && !rst;
         i3_d   <= i2_d;
-        h_max  <= xd > J_MAX - 2;
-        h_loop <= xd > J_LOOP - 2;
-        k_max  <= J_MAX - 4 - xd;
-        k_loop <= J_LOOP - 4 - xd;
-        p_q    <= (p3 > 10'sd5) ? p3 : 10'sd5;
-        p_m7   <= ((p3 > 10'sd5) ? p3 : 10'sd5) - 10'sd7;
-        xw     <= xd + W_STALE;
-        x_r    <= xd + 10'sd1;
+        h_max  <= x10 > J_MAX - 6;
+        h_loop <= x10 > J_LOOP - 6;
+        k_max  <= (J_MAX - 7) - x10;
+        k_loop <= (J_LOOP - 7) - x10;
+        p_q    <= p_big ? -x10 : 10'sd6;
+        p_m7   <= p_big ? (-10'sd7 - x10) : -10'sd1;
+        xw     <= x10 + (W_STALE + 3);
+        x_r    <= x10 + 10'sd4;
     end
 
     // ---- a+3: decision ----
@@ -175,6 +177,14 @@ module nco_align #(
     wire stale_j   = h_loop || (q > k_loop);
     wire admit     = i3_v && !late_hard && (!stale_j || (r <= xw));
     wire drop      = i3_v && !admit;
+    // a+4: the write and the count, from registers
+    reg          adm4 = 1'b0, drop4 = 1'b0;
+    reg [DW-1:0] i4_d = {DW{1'b0}};
+    always @(posedge clk) begin
+        adm4  <= admit && !rst;
+        drop4 <= drop && !rst;
+        i4_d  <= i3_d;
+    end
     always @(posedge clk) begin
         if (rst) begin
             q <= -10'sd2;
@@ -188,7 +198,7 @@ module nco_align #(
     // ---- back-pressure: FIFO + admission pipeline ----
     reg s_ready_r = 1'b0;
     wire [AW:0] occ = wr - rd;               // AW+1 bits: wraps with the pointers
-    wire [AW+1:0] occ_all = occ + i1_v + i2_v + i3_v;
+    wire [AW+1:0] occ_all = occ + i1_v + i2_v + i3_v + adm4;
     always @(posedge clk) s_ready_r <= ~rst && (occ_all <= (1 << AW) - 2);
     assign s_ready = s_ready_r;
 
@@ -243,13 +253,13 @@ module nco_align #(
         pop_tag    <= head_t;
 
         late <= 1'b0;
-        if (admit)
-            mem[wr[AW-1:0]] <= i3_d;
+        if (adm4)
+            mem[wr[AW-1:0]] <= i4_d;
         if (rst) begin
             wr <= 0; rd <= 0; gap <= 4'd0; late_cnt <= 16'd0; pop <= 1'b0;
         end else begin
-            if (admit) wr <= wr + 1'b1;
-            if (drop || (rel && f_late)) begin
+            if (adm4) wr <= wr + 1'b1;
+            if (drop4 || (rel && f_late)) begin
                 late <= 1'b1;
                 if (late_cnt != 16'hFFFF) late_cnt <= late_cnt + 1'b1;
             end

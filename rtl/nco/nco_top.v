@@ -56,7 +56,7 @@ module nco_top #(
     parameter [47:0]  FPS_NOM       = 48'd7205759403793,  // 100 MHz: round(f*1e-12*2^56)
     parameter integer T_SLOT_PS     = 10000,              // nominal slot, for residual_ps
     parameter integer T_CLK_PS      = 4000,
-    parameter integer D             = 30,
+    parameter integer D             = 31,
     parameter integer J_LOOP        = 24,                 // loop uses hits released <= J_LOOP late
     parameter integer J_MAX         = 56,                 // later (coincidences): delivered only
     parameter integer W_STALE       = 48,                 // ... if within this of the last loop hit
@@ -182,10 +182,15 @@ module nco_top #(
     end
     wire e_out    = st[7];                // every hit: fields for the output
     wire f_valid  = st[13];
-    wire e_valid  = st[7]  && !sk[7];     // loop updates: fresh hits only
-    wire l_commit = st[11] && !sk[11];
-    wire l_clast  = st[11] && !sk[11];    // F-2: timeout reference (nco_lock_det)
-    wire l_f      = st[13] && !sk[13];
+    // loop updates: fresh hits only. Registered one stage early, so the stale mask adds
+    // no logic level in front of the loop's decisions and counters.
+    reg  e_valid = 1'b0, l_commit = 1'b0, l_f = 1'b0;
+    always @(posedge clk) begin
+        e_valid  <= !rst_pipe && st[6]  && !sk[6];
+        l_commit <= !rst_pipe && st[10] && !sk[10];   // E+4; also F-2: timeout reference
+        l_f      <= !rst_pipe && st[12] && !sk[12];
+    end
+    wire l_clast  = l_commit;
     // no timeout decision from a hit's E stage (n+7) until F + 3 (n+16); nco_lock_det
     // uses this two cycles before the decision
     reg  busy_e = 1'b0;
