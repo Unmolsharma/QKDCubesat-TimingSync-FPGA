@@ -15,42 +15,51 @@ starts with a PRELIMINARY banner, so they can't be mistaken for Vivado output.
 
 ## Current state of the two tops
 
-Seed 1, ideal LUT, Yosys 0.68, nextpnr-xilinx 0.9.8. **PRELIMINARY, tool estimates.**
+Seeds 1-3, ideal LUT, Yosys 0.68, nextpnr-xilinx 0.9.8, commit c2f87c4. **PRELIMINARY,
+tool estimates.**
 
 | | `tdc_arty_top` | `m1_arty_top` |
 |---|---|---|
 | Chain placement (240 cells, `SLICE_X12Y50..Y97`) | PASS | PASS |
 | I/O pins and standards | PASS (12) | PASS (15) |
 | MMCM in the bitstream source | x10 / 4 = 250 MHz | x10 / 4 = 250 MHz |
-| Worst setup slack at 4 ns | **-1.7 ns** | **-3.6 ns** |
-| Estimated Fmax | ~174 MHz | **~132 MHz** |
-| Slice LUTs / FFs / CARRY4 | 1488 / 1302 / 146 | 5710 / 4357 / 453 |
+| Worst setup slack at 4 ns, seeds 1 / 2 / 3 | -1.02 / -0.57 / -0.42 ns | -3.21 / -2.62 / -2.57 ns |
+| Estimated Fmax, seeds 1 / 2 / 3 | ~199 / 219 / 226 MHz | **~138 / 151 / 152 MHz** |
+| Failing `clk_sys` endpoints (seed 1) | 80 of 3228 | 1708 of 12612 |
+| 50 MHz serial clock `clk_ser` | passes, +13.6 ns or more | passes, +11.9 ns or more |
+| Slice LUTs / FFs / CARRY4 | 1699 / 1668 / 174 | 6594 / 5922 / 541 |
 | RAMB36 / DSP48 | 1 / 0 | 1 / 5 |
-| Build time on the development laptop | ~4 min | ~17 min (with the regression running) |
+| Build time on the development laptop | ~4-5 min | ~11-21 min |
 
-Both columns are from the same commit: the pipelined NCO with the fanout and reset-tree
-changes (registered clears, early timeout decision, `rst_tree.v`). `clk_src` in M1 passes
-at 100 MHz (245.6 MHz estimated).
+The MMCM check in the summary reads CLKOUT0 only; CLKOUT1 (the 50 MHz serial clock)
+is not decoded from the FASM. Paths between `clk_sys` and `clk_ser` are listed in
+`sta.rpt` under "Paths between clocks" (1.3-1.5 ns) and not checked: nextpnr has no
+`set_max_delay` (see `constraints.rpt`).
 
 **Neither top meets 250 MHz in this flow, so neither bitstream should be expected to work
 reliably.** The chain's structure can be right while the logic behind it is too slow.
 
-History of the M1 estimate: about 27 MHz unpipelined, about 119 MHz pipelined, about
-132 MHz with the fanout fixes (`reports/sta.rpt`: 1828 of 12954 endpoints fail, was
-4318 of 12646). The timeout flag and reset nets no longer appear in the worst groups.
-What is left:
+History of the M1 estimate (seed 1 unless noted): about 27 MHz unpipelined, about 119 MHz
+pipelined, about 132 MHz with the fanout fixes, now 138-152 MHz over three seeds after
+pipelining the TDC encoder and the NCO's slip and timeout compares and moving the UART,
+settings and telemetry to a 50 MHz clock. The NCO admission logic added for late hits and
+coincidences was at first M1's worst path (-5.2 ns); restructured over three commits it is
+down to -3.2 ns on seed 1 and out of the worst list on seeds 2 and 3. `tdc_arty_top` went
+from ~174 MHz (seed 1) to 199-226 MHz. What is left, all between about -2 and -3.2 ns in
+M1 and with no single dominant path:
 
-* TDC popcount encoder `u_fe.u_enc.s1 -> s2`, 7 logic stages (-3.6 ns in M1, -1.2 ns
-  in `tdc_arty_top`). This is block 1's encoder, worse in M1 only because of placement
-  pressure; changing it changes the TDC's pipeline latency.
-* NCO slip-threshold compares `u_ld.c_lt / c_gt / n_gt` from the `slip_thr` register
-  (-2.9 ns), the timeout compare `u_ld.tmo_e` (-2.5 ns), and the gate compare `ge_h`
-  (-2.2 ns). None of these is in the loop's feedback path.
-* UART: the 173-bit shift register's enable (-2.9 ns in M1, -1.0 ns alone), and in
-  `tdc_arty_top` the TDC output enable from the UART FIFO's `s_ready` (`m_raw`, -1.7 ns).
+* NCO align: the registered admit/drop decision (`drop5`, 3 logic stages, placement
+  bound) and `late_cnt`.
+* TDC hit detector: the capture enables `cand_coarse`, `cand_fine`, `ev_coarse` (2
+  logic stages, high fanout, -2.7 ns in M1, -1.0 ns in `tdc_arty_top`), and the encoder's
+  4-way stage `u_enc.s4` (-0.3 to -0.6 ns in `tdc_arty_top`).
+* NCO lock detector: the timeout mask decode `u_ld.mask` from `L` / `to_shift`, the mse
+  threshold compares `m_gt_unlock` / `acq_ok`, the counters' enables.
+* NCO loop filter `u_lf.rnd_bit`, `u_lf.v`, `corr_df`, and the gate compare `ge_h`: these
+  are in the loop's feedback path, and pipelining them adds loop delay.
+* `m_cal` (the TDC output register) in M1, from the NCO's registered `s_ready`.
 
-Seed-to-seed spread is large: before these changes `tdc_arty_top` gave -2.6, -3.0 and
--3.2 ns on seeds 1 to 3. Only seed 1 has been run since, so read each number as one sample.
+Seed-to-seed spread: 0.6 ns on both tops in this round. Read each number as one sample.
 
 ## Setup on Windows
 
@@ -158,6 +167,7 @@ netlist cell, so that is what the placement becomes:
 | `EXCLUDE_PLACEMENT` on the pblock | **Not honored** | Other logic can use the rest of the column. 26 cells on M1, in rows Y98-Y99, above the chain. Listed in `chain_placement.rpt` |
 | `ASYNC_REG` | **Not honored** | Second-stage FFs are not kept next to the capture FFs: up to 26 sites away on M1, 9 on `tdc_arty_top`. That eats into the metastability settling time. `-nosrl` at least keeps synchronisers out of SRLs |
 | `DONT_TOUCH` | **Not honored**, covered by checks | Yosys may in principle optimise these cells, so the checks confirm they all survive and connect as designed |
+| `set_max_delay -datapath_only` between `clk_sys` and `clk_ser` | **Not honored** | The crossings (async FIFO pointers, snapshot buses) are not checked; `sta.rpt` lists their longest delay under "Paths between clocks" |
 | `CFGBVS`, `CONFIG_VOLTAGE`, `BITSTREAM.GENERAL.COMPRESS` | **Not honored** | No voltage DRC; the bitstream is uncompressed |
 | `set_clock_groups`, `set_false_path` on ports, `ALLOW_COMBINATORIAL_LOOPS` | Not needed | nextpnr has no such checks: it doesn't time unconstrained ports or hold paths between clocks to a requirement, and has no loop DRC |
 
