@@ -148,12 +148,12 @@ module nco_align #(
     // ---- a+2: constants of x alone (i3), straight from x (one add or compare each).
     // xd = t_lead[a+3] - c = x + 3. The write is at the end of a+4, so n >= a + 10 = c +
     // xd + 3, and with q = n_prev - t_nco[a+3]:  j = max(0, xd + 3, q + xd + 4).
-    //   j > J_MAX  <=> x > J_MAX - 6  || q > J_MAX - 7 - x
-    //   j > J_LOOP <=> x > J_LOOP - 6 || q > J_LOOP - 7 - x
+    //   j > J_MAX  <=> x > J_MAX - 6  || q + x > J_MAX - 7
+    //   j > J_LOOP <=> x > J_LOOP - 6 || q + x > J_LOOP - 7
     //   q next cycle, if admitted: n - t_nco[a+4] = j - xd + 3 = max(-x, 6, q + 7)
-    //   c - c_loop = r - xd  (r = t_lead[a+3] - c_loop); r next cycle, if a loop hit: x + 4
-    reg signed [9:0] k_max = 10'sd0, k_loop = 10'sd0, p_m7 = 10'sd0, p_q = 10'sd0;
-    reg signed [9:0] xw = 10'sd0, x_r = 10'sd0;
+    //   c - c_loop = r - xd  (r = t_lead[a+3] - c_loop): stale allowed if r - x <= W + 3;
+    //   r next cycle, if a loop hit: x + 4
+    reg signed [9:0] p_m7 = 10'sd0, p_q = 10'sd0, x_r = 10'sd0;
     reg              h_max = 1'b0, h_loop = 1'b0;
     wire signed [9:0] x10 = x2;
     wire              p_big = x10 < -10'sd6;          // -x > 6
@@ -162,26 +162,49 @@ module nco_align #(
         i3_d   <= i2_d;
         h_max  <= x10 > J_MAX - 6;
         h_loop <= x10 > J_LOOP - 6;
-        k_max  <= (J_MAX - 7) - x10;
-        k_loop <= (J_LOOP - 7) - x10;
         p_q    <= p_big ? -x10 : 10'sd6;
         p_m7   <= p_big ? (-10'sd7 - x10) : -10'sd1;
-        xw     <= x10 + (W_STALE + 3);
         x_r    <= x10 + 10'sd4;
     end
 
-    // ---- a+3: decision ----
-    reg signed [9:0] q = -10'sd2;            // floor -2: no constraint left from n_prev
+    // ---- the comparisons against the schedule, one cycle ahead ----
+    // The decision for this hit depends on q and r of ITS cycle, which depend on the
+    // decision for the hit before it (one cycle earlier). So while that hit decides,
+    // both outcomes are compared here, with the previous hit's p_q / x_r and this hit's
+    // x, and registered; the decision only picks one with the registered previous
+    // decision (adm4, loop4). Nothing but a select is left in the recurrence.
+    //   previous admitted:      q' = max(p_q_prev, q + 7)    r' = x_r_prev (if a loop hit)
+    //   previous not admitted:  q' = max(q - 1, -2)          r' = min(r + 1, 255)
+    reg signed [9:0] q = -10'sd2;            // q of this cycle (floor -2: no constraint)
     reg signed [9:0] r = 10'sd255;           // saturates at 255: "long ago"
-    wire late_hard = h_max  || (q > k_max);
-    wire stale_j   = h_loop || (q > k_loop);
-    wire admit     = i3_v && !late_hard && (!stale_j || (r <= xw));
+    wire signed [9:0] qn = (q > -10'sd2) ? q - 10'sd1 : -10'sd2;
+    wire signed [10:0] s_a1 = p_q + x10;     // previous admitted: p_q_prev + x
+    wire signed [10:0] s_a2 = q + x10;       //                    (q + 7) + x  - 7
+    wire signed [10:0] s_n  = qn + x10;      // previous not admitted
+    wire signed [10:0] r_a  = x_r - x10;     // previous was a loop hit
+    wire signed [10:0] r_n  = r - x10;
+    reg fa_max = 1'b0, fn_max = 1'b0, fa_loop = 1'b0, fn_loop = 1'b0, fa_r = 1'b0, fn_r = 1'b0;
+    always @(posedge clk) begin
+        fa_max  <= (s_a1 > J_MAX - 7)  || (s_a2 > J_MAX - 14);
+        fn_max  <=  s_n  > J_MAX - 7;
+        fa_loop <= (s_a1 > J_LOOP - 7) || (s_a2 > J_LOOP - 14);
+        fn_loop <=  s_n  > J_LOOP - 7;
+        fa_r    <=  r_a <= W_STALE + 3;
+        fn_r    <= (r != 10'sd255) && (r_n <= W_STALE + 2);
+    end
+
+    // ---- a+3: decision (a select of registered flags) ----
+    reg  adm4 = 1'b0, loop4 = 1'b0, drop4 = 1'b0;
+    wire late_hard = h_max  || (adm4 ? fa_max  : fn_max);
+    wire stale_j   = h_loop || (adm4 ? fa_loop : fn_loop);
+    wire r_ok      = loop4 ? fa_r : fn_r;
+    wire admit     = i3_v && !late_hard && (!stale_j || r_ok);
     wire drop      = i3_v && !admit;
     // a+4: the write and the count, from registers
-    reg          adm4 = 1'b0, drop4 = 1'b0;
     reg [DW-1:0] i4_d = {DW{1'b0}};
     always @(posedge clk) begin
         adm4  <= admit && !rst;
+        loop4 <= admit && !stale_j && !rst;
         drop4 <= drop && !rst;
         i4_d  <= i3_d;
     end
@@ -190,7 +213,7 @@ module nco_align #(
             q <= -10'sd2;
             r <= 10'sd255;
         end else begin
-            q <= admit ? ((q > p_m7) ? q + 10'sd7 : p_q) : ((q > -10'sd2) ? q - 10'sd1 : -10'sd2);
+            q <= admit ? ((q > p_m7) ? q + 10'sd7 : p_q) : qn;
             r <= (admit && !stale_j) ? x_r : ((r < 10'sd255) ? r + 10'sd1 : r);
         end
     end
