@@ -326,7 +326,7 @@ RTL must equal it **bit for bit on every hit**, and in every test it does.
 ### Time convention end to end
 
 `t_hit = coarse·T_clk − fine_ps`, exactly as block 1. The NCO's time axis
-t_nco runs D = 31 clocks behind the TDC coarse counter (enough for a merged
+t_nco runs D = 32 clocks behind the TDC coarse counter (enough for a merged
 5-channel hit, which reaches the NCO up to 21 clocks after its edge, to be released at j = 0). The phase detector
 interpolates `φ(t_hit) = phase[c] − fine_ps·f`. `sim/integration/test_tdc_nco.py`
 drives real pulses through the behavioural TDC into the NCO and checks every
@@ -384,8 +384,8 @@ in exactly the same cycles as before: `model/loop_fixed.py` is unchanged and the
 NCO tests are bit-exact, including the timeout unlock in `test_gap_reacquire`.
 
 **Admission: late hits cost nothing, coincidences go out whole.** `nco_align`
-predicts each hit's release cycle n = max(c, a + 10, n_prev + 8) as it arrives, in
-four pipeline stages with 10-bit relative counters (`model/loop_fixed.py`,
+predicts each hit's release cycle n = max(c, a + 11, n_prev + 8) as it arrives, in
+five pipeline stages with 10-bit relative counters (`model/loop_fixed.py`,
 `class Admission`). With j = n − c:
 
 | j | what happens |
@@ -394,8 +394,8 @@ four pipeline stages with 10-bit relative counters (`model/loop_fixed.py`,
 | 25 … `J_MAX` = 56, within 48 clocks of the last hit the loop used | released as *stale*: slot, error, residual and output as usual, every loop strobe masked |
 | otherwise | dropped before the FIFO and counted in `late_cnt`; takes no release slot |
 
-The four admission stages and the two extra TDC encoder stages are offset by
-raising D from 20 to 31, so the loop's timing is unchanged
+The five admission stages and the two extra TDC encoder stages are offset by
+raising D from 20 to 32, so the loop's timing is unchanged
 (`merge_limit.py` gives the same drops with the longer TDC latency). Stale hits add no loop delay: the loop never sees a hit more
 than 24 clocks old. All five hits of a 5-channel coincidence (released at j = 0, 8,
 16, 24, 32) are delivered unless the NCO was already 3 or more hits behind. fine′ =

@@ -56,7 +56,7 @@ module nco_top #(
     parameter [47:0]  FPS_NOM       = 48'd7205759403793,  // 100 MHz: round(f*1e-12*2^56)
     parameter integer T_SLOT_PS     = 10000,              // nominal slot, for residual_ps
     parameter integer T_CLK_PS      = 4000,
-    parameter integer D             = 31,
+    parameter integer D             = 32,
     parameter integer J_LOOP        = 24,                 // loop uses hits released <= J_LOOP late
     parameter integer J_MAX         = 56,                 // later (coincidences): delivered only
     parameter integer W_STALE       = 48,                 // ... if within this of the last loop hit

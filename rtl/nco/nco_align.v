@@ -5,7 +5,7 @@
 //   The NCO is a real-time counter: its phase register only holds the value
 //   for "now". A timestamp {c, fine} describes a moment just before clock
 //   edge c, but the TDC delivers it ~10 clocks later. So the NCO's own time
-//   axis, t_nco, runs D clocks BEHIND the TDC's coarse counter (D = 31), and
+//   axis, t_nco, runs D clocks BEHIND the TDC's coarse counter (D = 32), and
 //   this FIFO holds each timestamp until t_nco reaches c. At that moment the
 //   phase register holds exactly phase(edge c), and the phase detector
 //   interpolates back by fine_ps.
@@ -13,7 +13,7 @@
 // RELEASE RULE (one hit per POP_GAP cycles at most)
 //   A hit that arrives in cycle a (s_valid && s_ready, t_nco = a) is released
 //   ("popped") in cycle
-//        n = max(c, a + 10, n_prev + POP_GAP)
+//        n = max(c, a + 11, n_prev + POP_GAP)
 //   n_prev being the previous release. Usually n = c (j = 0). If the hit is
 //   released j = n - c cycles late (two channels with the same coarse time, a
 //   burst), the timestamp is rewritten exactly as
@@ -42,10 +42,11 @@
 //   so the recurrence is a 9-bit compare and add, not 48 bits.
 //     a      s_coarse - t_lead, two 24-bit halves (registered: i1)
 //     a+1    x, saturated (i2)
-//     a+2    constants that depend on x only, each one add or compare (i3)
-//     a+3    decision (only the q/r recurrence here), registered
-//     a+4    write into the FIFO; late pulse and count
-//   so the earliest release is (a + 4) + 6 = a + 10 (ALIGN_LAT in loop_fixed.py).
+//     a+2    thresholds that depend on x only, each one add or compare (i3)
+//     a+3    compare with the schedule for both outcomes of the hit ahead (i4)
+//     a+4    decision: a select of those flags by the hit ahead's registered outcome
+//     a+5    write into the FIFO; late pulse and count
+//   so the earliest release is (a + 5) + 6 = a + 11 (ALIGN_LAT in loop_fixed.py).
 //
 //   POP_GAP = 8 is what keeps the control stages hazard-free: the loop's
 //   state updates are visible 8 cycles after E (nco_top), so every hit sees the
@@ -117,8 +118,8 @@ module nco_align #(
     // Admission
     // =========================================================================
     // ---- a: differences, registered (i1) ----
-    reg            i1_v = 1'b0, i2_v = 1'b0, i3_v = 1'b0;
-    reg [DW-1:0]   i1_d = {DW{1'b0}}, i2_d = {DW{1'b0}}, i3_d = {DW{1'b0}};
+    reg            i1_v = 1'b0, i2_v = 1'b0, i3_v = 1'b0, i4_v = 1'b0;
+    reg [DW-1:0]   i1_d = {DW{1'b0}}, i2_d = {DW{1'b0}}, i3_d = {DW{1'b0}}, i4_d = {DW{1'b0}};
     reg [LO:0]     i1_lo = {(LO+1){1'b0}};
     reg [HI-1:0]   i1_hi = {HI{1'b0}};
     wire           s_take = s_valid && s_ready;
@@ -145,83 +146,96 @@ module nco_align #(
         else            x2 <= i1_hi[HI-1] ? -9'sd128 : 9'sd127;   // far out of range either way
     end
 
-    // ---- a+2: constants of x alone (i3), straight from x (one add or compare each).
-    // xd = t_lead[a+3] - c = x + 3. The write is at the end of a+4, so n >= a + 10 = c +
-    // xd + 3, and with q = n_prev - t_nco[a+3]:  j = max(0, xd + 3, q + xd + 4).
-    //   j > J_MAX  <=> x > J_MAX - 6  || q + x > J_MAX - 7
-    //   j > J_LOOP <=> x > J_LOOP - 6 || q + x > J_LOOP - 7
-    //   q next cycle, if admitted: n - t_nco[a+4] = j - xd + 3 = max(-x, 6, q + 7)
-    //   c - c_loop = r - xd  (r = t_lead[a+3] - c_loop): stale allowed if r - x <= W + 3;
-    //   r next cycle, if a loop hit: x + 4
-    reg signed [9:0] p_m7 = 10'sd0, p_q = 10'sd0, x_r = 10'sd0;
-    reg              h_max = 1'b0, h_loop = 1'b0;
+    // Timing below: this hit decides in cycle d = a + 4 and is written at the end of
+    // a + 5, so n >= a + 11. With x = t_lead[a] - c (so a - c = x - 4) and
+    // q = n_prev - t_nco[d]:
+    //   j = max(0, x + 7, q + x + 8)
+    //   j > J_MAX  <=> x > J_MAX - 7  || q > J_MAX - 8 - x
+    //   j > J_LOOP <=> x > J_LOOP - 7 || q > J_LOOP - 8 - x
+    //   q in d+1, if admitted: n - t_nco[d+1] = j - x - 1 = max(-x - 1, 6, q + 7)
+    //   r = t_lead[d] - c_loop: c - c_loop = r - x - 4, stale allowed if r <= x + 4 + W;
+    //   r in d+1, if a loop hit: x + 5
+
+    // ---- a+2: everything that depends on x alone, one add or compare each (i3) ----
+    reg signed [9:0] k_maxn = 10'sd0, k_maxa = 10'sd0, k_loopn = 10'sd0, k_loopa = 10'sd0;
+    reg signed [9:0] xw = 10'sd0, xwm1 = 10'sd0;
+    reg signed [9:0] p_q3 = 10'sd0, p_qm1_3 = 10'sd0, p_m7_3 = 10'sd0, x_r3 = 10'sd0;
+    reg              h_max3 = 1'b0, h_loop3 = 1'b0;
     wire signed [9:0] x10 = x2;
-    wire              p_big = x10 < -10'sd6;          // -x > 6
+    wire              p_big = x10 < -10'sd7;          // -x - 1 > 6
     always @(posedge clk) begin
-        i3_v   <= i2_v && !rst;
-        i3_d   <= i2_d;
-        h_max  <= x10 > J_MAX - 6;
-        h_loop <= x10 > J_LOOP - 6;
-        p_q    <= p_big ? -x10 : 10'sd6;
-        p_m7   <= p_big ? (-10'sd7 - x10) : -10'sd1;
-        x_r    <= x10 + 10'sd4;
+        i3_v    <= i2_v && !rst;
+        i3_d    <= i2_d;
+        h_max3  <= x10 > J_MAX - 7;
+        h_loop3 <= x10 > J_LOOP - 7;
+        k_maxn  <= (J_MAX - 8) - x10;           // late if q' > this (q' = q of d+1)
+        k_maxa  <= (J_MAX - 15) - x10;          // ... with q' = q + 7
+        k_loopn <= (J_LOOP - 8) - x10;
+        k_loopa <= (J_LOOP - 15) - x10;
+        xw      <= x10 + (W_STALE + 4);         // stale allowed if r' <= this
+        xwm1    <= x10 + (W_STALE + 3);         // ... with r' = r + 1
+        p_q3    <= p_big ? (-10'sd1 - x10) : 10'sd6;
+        p_qm1_3 <= p_big ? (-10'sd2 - x10) : 10'sd5;
+        p_m7_3  <= p_big ? (-10'sd8 - x10) : -10'sd1;
+        x_r3    <= x10 + 10'sd5;
     end
 
-    // ---- the comparisons against the schedule, one cycle ahead ----
-    // The decision for this hit depends on q and r of ITS cycle, which depend on the
-    // decision for the hit before it (one cycle earlier). So while that hit decides,
-    // both outcomes are compared here, with the previous hit's p_q / x_r and this hit's
-    // x, and registered; the decision only picks one with the registered previous
-    // decision (adm4, loop4). Nothing but a select is left in the recurrence.
-    //   previous admitted:      q' = max(p_q_prev, q + 7)    r' = x_r_prev (if a loop hit)
-    //   previous not admitted:  q' = max(q - 1, -2)          r' = min(r + 1, 255)
-    reg signed [9:0] q = -10'sd2;            // q of this cycle (floor -2: no constraint)
-    reg signed [9:0] r = 10'sd255;           // saturates at 255: "long ago"
-    wire signed [9:0] qn = (q > -10'sd2) ? q - 10'sd1 : -10'sd2;
-    wire signed [10:0] s_a1 = p_q + x10;     // previous admitted: p_q_prev + x
-    wire signed [10:0] s_a2 = q + x10;       //                    (q + 7) + x  - 7
-    wire signed [10:0] s_n  = qn + x10;      // previous not admitted
-    wire signed [10:0] r_a  = x_r - x10;     // previous was a loop hit
-    wire signed [10:0] r_n  = r - x10;
+    // ---- a+3: compare against the schedule, both outcomes of the hit ahead (i4) ----
+    // The hit ahead decides in this cycle; its outcome sets q, r for this hit:
+    //   admitted:      q' = max(p_q4, q + 7)          r' = x_r4 if it was a loop hit
+    //   not admitted:  q' = qn = max(q - 1, -2)       r' = min(r + 1, 255)
+    // Each flag is one register-to-register compare; the decision then only selects.
+    reg signed [9:0] q  = -10'sd2;           // n_prev - t_nco (floor -2: no constraint)
+    reg signed [9:0] qn = -10'sd2;           // max(q - 1, -2), kept as its own register
+    reg signed [9:0] r  = 10'sd255;          // t_lead - c_loop, saturates at 255
+    reg signed [9:0] p_q4 = 10'sd0, p_qm1_4 = 10'sd0, p_m7_4 = 10'sd0, x_r4 = 10'sd0;
+    reg              h_max4 = 1'b0, h_loop4 = 1'b0;
     reg fa_max = 1'b0, fn_max = 1'b0, fa_loop = 1'b0, fn_loop = 1'b0, fa_r = 1'b0, fn_r = 1'b0;
     always @(posedge clk) begin
-        fa_max  <= (s_a1 > J_MAX - 7)  || (s_a2 > J_MAX - 14);
-        fn_max  <=  s_n  > J_MAX - 7;
-        fa_loop <= (s_a1 > J_LOOP - 7) || (s_a2 > J_LOOP - 14);
-        fn_loop <=  s_n  > J_LOOP - 7;
-        fa_r    <=  r_a <= W_STALE + 3;
-        fn_r    <= (r != 10'sd255) && (r_n <= W_STALE + 2);
+        i4_v    <= i3_v && !rst;
+        i4_d    <= i3_d;
+        p_q4    <= p_q3;   p_qm1_4 <= p_qm1_3;   p_m7_4 <= p_m7_3;   x_r4 <= x_r3;
+        h_max4  <= h_max3; h_loop4 <= h_loop3;
+        fa_max  <= (p_q4 > k_maxn)  || (q > k_maxa);
+        fn_max  <=  qn > k_maxn;
+        fa_loop <= (p_q4 > k_loopn) || (q > k_loopa);
+        fn_loop <=  qn > k_loopn;
+        fa_r    <=  x_r4 <= xw;
+        fn_r    <= (r != 10'sd255) && (r <= xwm1);
     end
 
-    // ---- a+3: decision (a select of registered flags) ----
-    reg  adm4 = 1'b0, loop4 = 1'b0, drop4 = 1'b0;
-    wire late_hard = h_max  || (adm4 ? fa_max  : fn_max);
-    wire stale_j   = h_loop || (adm4 ? fa_loop : fn_loop);
-    wire r_ok      = loop4 ? fa_r : fn_r;
-    wire admit     = i3_v && !late_hard && (!stale_j || r_ok);
-    wire drop      = i3_v && !admit;
-    // a+4: the write and the count, from registers
-    reg [DW-1:0] i4_d = {DW{1'b0}};
+    // ---- a+4: decision, a select of registered flags (prev = the hit ahead's outcome) ----
+    reg  adm5 = 1'b0, loop5 = 1'b0, drop5 = 1'b0;
+    wire late_hard = h_max4  || (adm5 ? fa_max  : fn_max);
+    wire stale_j   = h_loop4 || (adm5 ? fa_loop : fn_loop);
+    wire r_ok      = loop5 ? fa_r : fn_r;
+    wire admit     = i4_v && !late_hard && (!stale_j || r_ok);
+    wire drop      = i4_v && !admit;
+    // a+5: the write and the count, from registers
+    reg [DW-1:0] i5_d = {DW{1'b0}};
     always @(posedge clk) begin
-        adm4  <= admit && !rst;
-        loop4 <= admit && !stale_j && !rst;
-        drop4 <= drop && !rst;
-        i4_d  <= i3_d;
+        adm5  <= admit && !rst;
+        loop5 <= admit && !stale_j && !rst;
+        drop5 <= drop && !rst;
+        i5_d  <= i4_d;
     end
+    wire q_up = q > p_m7_4;                  // max(p_q, q + 7) picks q + 7
     always @(posedge clk) begin
         if (rst) begin
-            q <= -10'sd2;
-            r <= 10'sd255;
+            q  <= -10'sd2;
+            qn <= -10'sd2;
+            r  <= 10'sd255;
         end else begin
-            q <= admit ? ((q > p_m7) ? q + 10'sd7 : p_q) : qn;
-            r <= (admit && !stale_j) ? x_r : ((r < 10'sd255) ? r + 10'sd1 : r);
+            q  <= admit ? (q_up ? q + 10'sd7 : p_q4)    : qn;
+            qn <= admit ? (q_up ? q + 10'sd6 : p_qm1_4) : ((qn > -10'sd2) ? qn - 10'sd1 : -10'sd2);
+            r  <= (admit && !stale_j) ? x_r4 : ((r < 10'sd255) ? r + 10'sd1 : r);
         end
     end
 
     // ---- back-pressure: FIFO + admission pipeline ----
     reg s_ready_r = 1'b0;
     wire [AW:0] occ = wr - rd;               // AW+1 bits: wraps with the pointers
-    wire [AW+1:0] occ_all = occ + i1_v + i2_v + i3_v + adm4;
+    wire [AW+1:0] occ_all = occ + i1_v + i2_v + i3_v + i4_v + adm5;
     always @(posedge clk) s_ready_r <= ~rst && (occ_all <= (1 << AW) - 2);
     assign s_ready = s_ready_r;
 
@@ -276,13 +290,13 @@ module nco_align #(
         pop_tag    <= head_t;
 
         late <= 1'b0;
-        if (adm4)
-            mem[wr[AW-1:0]] <= i4_d;
+        if (adm5)
+            mem[wr[AW-1:0]] <= i5_d;
         if (rst) begin
             wr <= 0; rd <= 0; gap <= 4'd0; late_cnt <= 16'd0; pop <= 1'b0;
         end else begin
-            if (adm4) wr <= wr + 1'b1;
-            if (drop4 || (rel && f_late)) begin
+            if (adm5) wr <= wr + 1'b1;
+            if (drop5 || (rel && f_late)) begin
                 late <= 1'b1;
                 if (late_cnt != 16'hFFFF) late_cnt <= late_cnt + 1'b1;
             end
