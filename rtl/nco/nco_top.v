@@ -62,7 +62,7 @@ module nco_top #(
     parameter integer W_STALE       = 48,                 // ... if within this of the last loop hit
     parameter integer POP_GAP       = 8,
     parameter integer TAG_W         = 4,
-    parameter integer FIFO_AW       = 4,
+    parameter integer FIFO_AW       = 5,
     parameter integer TAU_INIT_LOG2 = 16
 )(
     input  wire               clk,

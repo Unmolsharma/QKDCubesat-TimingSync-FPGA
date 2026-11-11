@@ -37,7 +37,7 @@ import loop_fixed as lfx  # noqa: E402
 CH_LAT = 11                 # capture edge -> channel FIFO (tdc_multi_top: 10 to 12)
 MAXLAT = 14                 # tdc_multi_top parameter
 CH_DEPTH = 8                # tdc_multi_top QAW = 3
-NCO_DEPTH = 14              # nco_align: 2^AW - 2 usable (registered s_ready)
+NCO_DEPTH = 25              # nco_align: s_ready while at most 24 admitted hits wait (approx.)
 NUM_QUANTUM = 4
 
 

@@ -69,8 +69,9 @@
 //
 // BACK-PRESSURE: admitted hits are at least POP_GAP apart and released at most
 // D + J_MAX - 2 cycles after they are written, so in-spec input (c <= time_now)
-// never holds more than 10 entries. s_ready (registered) still guards the FIFO:
-// high while the FIFO plus the admission pipeline held at most 2^AW - 2 entries.
+// never holds more than 10 entries. s_ready (registered) still guards the FIFO: high
+// while it held at most 2^AW - 8 = 24 (the rest covers the admission stages and the
+// registered handshake). 32 entries cost the same LUT RAM as 16 on 7-series (RAM32M).
 // =============================================================================
 `timescale 1ns/1fs
 `default_nettype none
@@ -79,7 +80,7 @@ module nco_align #(
     parameter integer COARSE_W = 48,
     parameter integer FINE_W   = 16,
     parameter integer TAG_W    = 4,
-    parameter integer AW       = 4,
+    parameter integer AW       = 5,
     parameter integer J_LOOP   = 24,
     parameter integer J_MAX    = 56,
     parameter integer W_STALE  = 48,
@@ -205,9 +206,13 @@ module nco_align #(
     end
 
     // ---- a+4: decision, a select of registered flags (prev = the hit ahead's outcome) ----
-    reg  adm5 = 1'b0, loop5 = 1'b0, drop5 = 1'b0;
-    wire late_hard = h_max4  || (adm5 ? fa_max  : fn_max);
-    wire stale_j   = h_loop4 || (adm5 ? fa_loop : fn_loop);
+    // adm_p / loop_p: the hit ahead's outcome, for this select only. adm5 (below) is
+    // the same decision but drives the FIFO write, the pointer and the count: kept as a
+    // separate register (it differs during reset, so synthesis can't merge the two)
+    // so that the high-fanout copy is not in the decision loop.
+    reg  adm5 = 1'b0, loop5 = 1'b0, drop5 = 1'b0, adm_p = 1'b0;
+    wire late_hard = h_max4  || (adm_p ? fa_max  : fn_max);
+    wire stale_j   = h_loop4 || (adm_p ? fa_loop : fn_loop);
     wire r_ok      = loop5 ? fa_r : fn_r;
     wire admit     = i4_v && !late_hard && (!stale_j || r_ok);
     wire drop      = i4_v && !admit;
@@ -215,6 +220,7 @@ module nco_align #(
     reg [DW-1:0] i5_d = {DW{1'b0}};
     always @(posedge clk) begin
         adm5  <= admit && !rst;
+        adm_p <= admit;
         loop5 <= admit && !stale_j && !rst;
         drop5 <= drop && !rst;
         i5_d  <= i4_d;
@@ -232,11 +238,12 @@ module nco_align #(
         end
     end
 
-    // ---- back-pressure: FIFO + admission pipeline ----
+    // ---- back-pressure ----
+    // occ(X) leaves out up to 5 hits in the admission stages and the 2 that can arrive
+    // while s_ready is in flight: high while occ <= 2^AW - 8, so the FIFO cannot overflow.
     reg s_ready_r = 1'b0;
     wire [AW:0] occ = wr - rd;               // AW+1 bits: wraps with the pointers
-    wire [AW+1:0] occ_all = occ + i1_v + i2_v + i3_v + i4_v + adm5;
-    always @(posedge clk) s_ready_r <= ~rst && (occ_all <= (1 << AW) - 2);
+    always @(posedge clk) s_ready_r <= ~rst && (occ <= (1 << AW) - 8);
     assign s_ready = s_ready_r;
 
     // =========================================================================
